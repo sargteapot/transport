@@ -4,7 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
@@ -15,12 +19,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.compose.AsyncImage
 import nz.co.fordwalls.transportercam.MainViewModel
 import nz.co.fordwalls.transportercam.database.Job
 import nz.co.fordwalls.transportercam.database.JobStatus
+import nz.co.fordwalls.transportercam.database.MediaAsset
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -28,12 +36,13 @@ import java.util.*
 @Composable
 fun DashboardScreen(
     viewModel: MainViewModel,
-    initialTab: Int = 0, // Lift state for persistence
+    initialTab: Int = 0,
     onTabSelected: (Int) -> Unit,
     onJobClick: (Job) -> Unit,
     onScanClick: () -> Unit,
     onWharfScanClick: () -> Unit,
     onPrestartClick: () -> Unit,
+    onPhotosClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onLogout: () -> Unit
 ) {
@@ -77,7 +86,7 @@ fun DashboardScreen(
             }
 
             when (initialTab) {
-                0 -> TodayTab(onScanClick, onWharfScanClick, onPrestartClick)
+                0 -> TodayTab(onScanClick, onWharfScanClick, onPrestartClick, onPhotosClick)
                 else -> {
                     val filteredJobs = remember(jobs, initialTab) {
                         when (initialTab) {
@@ -115,7 +124,7 @@ fun DashboardScreen(
 }
 
 @Composable
-fun TodayTab(onScan: () -> Unit, onWharfScan: () -> Unit, onPrestart: () -> Unit) {
+fun TodayTab(onScan: () -> Unit, onWharfScan: () -> Unit, onPrestart: () -> Unit, onPhotosClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -123,25 +132,31 @@ fun TodayTab(onScan: () -> Unit, onWharfScan: () -> Unit, onPrestart: () -> Unit
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        val uniformBlue = MaterialTheme.colorScheme.primary
+        val uniformColor = MaterialTheme.colorScheme.primary
         
         DashboardButton(
             text = "Scan Booked Vehicle",
             icon = Icons.Default.QrCodeScanner,
-            color = uniformBlue,
+            color = uniformColor,
             onClick = onScan
         )
         DashboardButton(
             text = "Wharf Scan (Global)",
             icon = Icons.Default.Anchor,
-            color = uniformBlue,
+            color = uniformColor,
             onClick = onWharfScan
         )
         DashboardButton(
             text = "Pre-start Checklist",
             icon = Icons.AutoMirrored.Filled.Assignment,
-            color = uniformBlue,
+            color = uniformColor,
             onClick = onPrestart
+        )
+        DashboardButton(
+            text = "Photos",
+            icon = Icons.Default.PhotoLibrary,
+            color = uniformColor,
+            onClick = onPhotosClick
         )
         
         Spacer(Modifier.weight(1f))
@@ -162,7 +177,10 @@ fun DashboardButton(text: String, icon: ImageVector, color: Color, onClick: () -
         modifier = Modifier
             .fillMaxWidth()
             .height(80.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = color),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = color,
+            contentColor = MaterialTheme.colorScheme.onPrimary
+        ),
         shape = MaterialTheme.shapes.large
     ) {
         Row(
@@ -180,7 +198,9 @@ fun DashboardButton(text: String, icon: ImageVector, color: Color, onClick: () -
 @Composable
 fun JobCard(job: Job, onClick: () -> Unit) {
     val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-    
+    val activeContact = if (job.status == JobStatus.PICKED_UP) job.deliveryContact else job.pickupContact
+    val contactLabel = if (job.status == JobStatus.PICKED_UP) "Delivery Contact" else "Pickup Contact"
+
     ElevatedCard(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -192,67 +212,72 @@ fun JobCard(job: Job, onClick: () -> Unit) {
             }
         )
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Rego: ${job.rego}",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                StatusBadge(status = job.status)
-            }
-            
-            Spacer(Modifier.height(8.dp))
-            
-            Surface(
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-                shape = MaterialTheme.shapes.small,
-                modifier = Modifier.fillMaxWidth()
-            ) {
+        SelectionContainer {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Row(
-                    modifier = Modifier.padding(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Phone,
-                        contentDescription = null,
-                        modifier = Modifier.size(24.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(Modifier.width(12.dp))
                     Text(
-                        text = job.contactInfo.ifBlank { "No Contact Info" },
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        text = "Rego: ${job.rego}",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
                     )
+                    StatusBadge(status = job.status)
                 }
-            }
+                
+                Spacer(Modifier.height(8.dp))
+                
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                    shape = MaterialTheme.shapes.small,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Phone,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(contactLabel, style = MaterialTheme.typography.labelSmall)
+                            Text(
+                                text = activeContact.ifBlank { "No Contact Info" },
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
 
-            Spacer(Modifier.height(12.dp))
-            
-            DetailRow(icon = Icons.Default.Inventory, text = job.loadInfo)
-            DetailRow(icon = Icons.Default.ArrowUpward, text = "From: ${job.pickupAddress}")
-            DetailRow(icon = Icons.Default.ArrowDownward, text = "To: ${job.deliveryAddress}")
-            
-            Spacer(Modifier.height(8.dp))
-            
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    text = "Received: ${dateFormat.format(Date(job.createdAt))}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                job.dispatchedBy?.let {
+                Spacer(Modifier.height(12.dp))
+                
+                DetailRow(icon = Icons.Default.Inventory, text = job.loadInfo)
+                DetailRow(icon = Icons.Default.ArrowUpward, text = "From: ${job.pickupAddress}")
+                DetailRow(icon = Icons.Default.ArrowDownward, text = "To: ${job.deliveryAddress}")
+                
+                Spacer(Modifier.height(8.dp))
+                
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(
-                        text = "By: $it",
+                        text = "Received: ${dateFormat.format(Date(job.createdAt))}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    job.dispatchedBy?.let {
+                        Text(
+                            text = "By: $it",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
         }

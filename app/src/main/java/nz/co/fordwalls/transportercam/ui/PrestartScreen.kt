@@ -8,7 +8,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -88,7 +87,11 @@ fun PrestartScreen(
                     onValueChange = { notes = it },
                     label = { Text("Notes") },
                     modifier = Modifier.fillMaxWidth().height(120.dp),
-                    placeholder = { Text("Any issues or comments...") }
+                    placeholder = { Text("Any issues or comments...") },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                    )
                 )
             }
 
@@ -104,7 +107,7 @@ fun PrestartScreen(
                     modifier = Modifier.fillMaxWidth().height(56.dp).padding(vertical = 16.dp),
                     enabled = !isSaving
                 ) {
-                    if (isSaving) CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    if (isSaving) CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
                     else Text("Submit Pre-start", fontWeight = FontWeight.Bold)
                 }
             }
@@ -132,7 +135,11 @@ fun PrestartRow(
                     onValueChange = { if (it.all { char -> char.isDigit() }) onValueChange(it) },
                     label = { Text("Reading") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                    )
                 )
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

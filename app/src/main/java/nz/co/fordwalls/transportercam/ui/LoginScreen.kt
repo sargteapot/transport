@@ -49,7 +49,7 @@ fun LoginScreen(
             )
             
             Text(
-                text = "TransporterCam Fleet",
+                text = "Fleet Documentation",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.primary,

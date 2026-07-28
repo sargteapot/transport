@@ -33,6 +33,9 @@ interface TransporterDao {
     fun getMediaById(mediaId: Long): Flow<MediaAsset?>
 
     @Query("SELECT * FROM media_assets")
+    fun getAllMediaAssets(): Flow<List<MediaAsset>>
+
+    @Query("SELECT * FROM media_assets")
     suspend fun getAllMediaAssetsOnce(): List<MediaAsset>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

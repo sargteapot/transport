@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -62,7 +63,6 @@ fun ChecklistScreen(
         Pair("Notes", true)
     )
 
-    // Add Receiver Name only for Delivery Phase
     val defaultParts = remember(isDelivery) {
         if (isDelivery) {
             baseParts + Pair("Receiver Name", true)
@@ -75,7 +75,6 @@ fun ChecklistScreen(
     var hasInitializedFromData by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Initialize state from JSON or defaults
     LaunchedEffect(initialChecklistJson, isDelivery) {
         if (!hasInitializedFromData) {
             if (initialChecklistJson != null && initialChecklistJson.isNotEmpty()) {
@@ -84,7 +83,6 @@ fun ChecklistScreen(
                     checklistItems.clear()
                     checklistItems.addAll(items)
                     
-                    // If we just transitioned to delivery but the loaded list doesn't have Receiver Name, add it
                     if (isDelivery && checklistItems.none { it.part == "Receiver Name" }) {
                         checklistItems.add(ChecklistItem(part = "Receiver Name", isTextFieldOnly = true, status = ""))
                     }
@@ -110,32 +108,76 @@ fun ChecklistScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (isDelivery) "Drop-off Check: $folderName" else "Pickup Check: $folderName") },
+                title = { Text(if (isDelivery) "Drop-off Check" else "Pickup Check") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onAddPhotos) {
-                        Icon(Icons.Default.PhotoCamera, contentDescription = "Add Photos")
                     }
                 }
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddPhotos) {
+            FloatingActionButton(
+                onClick = onAddPhotos,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
                 Row(modifier = Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.PhotoCamera, null)
                     Spacer(Modifier.width(8.dp))
                     Text("Add Photos")
                 }
             }
+        },
+        bottomBar = {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                tonalElevation = 8.dp,
+                shadowElevation = 8.dp
+            ) {
+                Column(modifier = Modifier.padding(16.dp).navigationBarsPadding()) {
+                    if (errorMessage != null) {
+                        Text(
+                            text = errorMessage!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                    }
+                    
+                    Button(
+                        onClick = {
+                            val keysItem = checklistItems.find { it.part == "Keys" }
+                            if (keysItem == null || keysItem.otherDetails.isNullOrBlank()) {
+                                errorMessage = "⚠️ Please fill in the 'Keys' field."
+                                return@Button
+                            }
+
+                            if (isDelivery) {
+                                val receiverItem = checklistItems.find { it.part == "Receiver Name" }
+                                if (receiverItem == null || receiverItem.otherDetails.isNullOrBlank()) {
+                                    errorMessage = "⚠️ Please fill in the 'Receiver Name' field."
+                                    return@Button
+                                }
+                            }
+
+                            errorMessage = null
+                            val json = Json.encodeToString(checklistItems.toList())
+                            onSave(json)
+                        },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        shape = MaterialTheme.shapes.medium
+                    ) {
+                        Text(if (isDelivery) "Continue to Customer Signature" else "Continue to Driver Signature")
+                    }
+                }
+            }
         }
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.padding(padding).fillMaxSize().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.padding(padding).fillMaxSize().padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 16.dp)
         ) {
             itemsIndexed(checklistItems) { index, item ->
                 ChecklistRow(
@@ -145,53 +187,11 @@ fun ChecklistScreen(
                     },
                     onOtherDetailsChange = { details ->
                         checklistItems[index] = checklistItems[index].copy(otherDetails = details)
-                        // Clear error if they start typing in mandatory fields
                         if ((item.part == "Keys" || item.part == "Receiver Name") && details.isNotBlank()) {
                             errorMessage = null
                         }
                     }
                 )
-            }
-
-            if (errorMessage != null) {
-                item {
-                    Text(
-                        text = errorMessage!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                }
-            }
-
-            item {
-                Button(
-                    onClick = {
-                        // VALIDATION: Force 'Keys'
-                        val keysItem = checklistItems.find { it.part == "Keys" }
-                        if (keysItem == null || keysItem.otherDetails.isNullOrBlank()) {
-                            errorMessage = "⚠️ Please fill in the 'Keys' field."
-                            return@Button
-                        }
-
-                        // VALIDATION: Force 'Receiver Name' for delivery
-                        if (isDelivery) {
-                            val receiverItem = checklistItems.find { it.part == "Receiver Name" }
-                            if (receiverItem == null || receiverItem.otherDetails.isNullOrBlank()) {
-                                errorMessage = "⚠️ Please fill in the 'Receiver Name' field."
-                                return@Button
-                            }
-                        }
-
-                        errorMessage = null
-                        val json = Json.encodeToString(checklistItems.toList())
-                        onSave(json)
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 80.dp),
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    Text(if (isDelivery) "Continue to Customer Signature" else "Continue to Driver Signature")
-                }
             }
         }
     }
@@ -228,7 +228,11 @@ fun ChecklistRow(
                     label = { Text(if (isMandatory) "${item.part} (Mandatory)" else "Details") },
                     placeholder = { Text("Enter ${item.part}...") },
                     modifier = Modifier.fillMaxWidth(),
-                    isError = isMandatory && item.otherDetails.isNullOrBlank()
+                    isError = isMandatory && item.otherDetails.isNullOrBlank(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.White,
+                        unfocusedContainerColor = Color.White
+                    )
                 )
             } else {
                 ExposedDropdownMenuBox(
@@ -242,7 +246,10 @@ fun ChecklistRow(
                         label = { Text("Condition") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                         modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
-                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors()
+                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = Color.White
+                        )
                     )
                     ExposedDropdownMenu(
                         expanded = expanded,
@@ -267,7 +274,11 @@ fun ChecklistRow(
                         onValueChange = onOtherDetailsChange,
                         label = { Text("Describe Damage") },
                         placeholder = { Text("Specify damage...") },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = Color.White,
+                            unfocusedContainerColor = Color.White
+                        )
                     )
                 }
             }

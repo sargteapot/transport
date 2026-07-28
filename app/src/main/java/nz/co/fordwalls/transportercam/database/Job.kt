@@ -18,7 +18,8 @@ data class Job(
     val loadInfo: String = "",
     val pickupAddress: String = "",
     val deliveryAddress: String = "",
-    val contactInfo: String = "",
+    val pickupContact: String = "",
+    val deliveryContact: String = "",
     val notes: String? = null,
     val status: JobStatus = JobStatus.NEW,
     val driverName: String? = null,
@@ -26,7 +27,7 @@ data class Job(
     val customerName: String? = null,
     val customerSignatureUrl: String? = null,
     val pickupChecklistJson: String? = null,
-    val dropoffChecklistJson: String? = null, // Renamed
+    val dropoffChecklistJson: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val dispatchedBy: String? = null,
     val photoUrls: String? = null

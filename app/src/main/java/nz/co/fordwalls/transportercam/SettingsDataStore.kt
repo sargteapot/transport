@@ -20,12 +20,17 @@ class SettingsDataStore(private val context: Context) {
         val SHARE_SUMMARY_ENABLED = booleanPreferencesKey("share_summary_enabled")
         val CAPTURE_FEEDBACK_ENABLED = booleanPreferencesKey("capture_feedback_enabled")
         val FLEET_NUMBER = stringPreferencesKey("fleet_number")
+        val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         
         const val DEFAULT_DATE_FORMAT = "dd/MM/yyyy HH:mm:ss"
     }
 
     val fleetNumber: Flow<String?> = context.dataStore.data.map { preferences ->
         preferences[FLEET_NUMBER]
+    }
+
+    val notificationsEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
+        preferences[NOTIFICATIONS_ENABLED] ?: true
     }
 
     val timestampEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->
@@ -105,6 +110,12 @@ class SettingsDataStore(private val context: Context) {
             } else {
                 preferences[FLEET_NUMBER] = number
             }
+        }
+    }
+
+    suspend fun setNotificationsEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[NOTIFICATIONS_ENABLED] = enabled
         }
     }
 }

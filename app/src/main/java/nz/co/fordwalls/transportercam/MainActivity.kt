@@ -3,6 +3,7 @@ package nz.co.fordwalls.transportercam
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
@@ -29,39 +30,23 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var viewModel: MainViewModel
 
-    private val importBackupLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            val file = File(cacheDir, "import_backup.zip")
-            contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(file).use { output ->
-                    input.copyTo(output)
-                }
-            }
-            viewModel.importFullBackup(file) { success ->
-                if (success) {
-                    Toast.makeText(this, "Backup restored successfully!", Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(this, "Restore failed.", Toast.LENGTH_LONG).show()
-                }
-            }
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewModel = androidx.lifecycle.ViewModelProvider(this)[MainViewModel::class.java]
         enableEdgeToEdge()
 
-        requestPermissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.CAMERA,
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
+        val permissions = mutableListOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
         )
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        requestPermissionLauncher.launch(permissions.toTypedArray())
 
         setContent {
             val darkMode by viewModel.darkMode.collectAsState(initial = "auto")
@@ -82,9 +67,7 @@ class MainActivity : ComponentActivity() {
                         viewModel.exportVehicleZip(folderId) { file ->
                             if (file != null) shareFile(file, "Export Vehicle Documentation")
                         }
-                    },
-                    onShareFile = { file, title -> shareFile(file, title) },
-                    onImportBackup = { importBackupLauncher.launch("application/zip") }
+                    }
                 )
             }
         }
@@ -151,9 +134,7 @@ fun AppNavigation(
     viewModel: MainViewModel = viewModel(),
     onShareMedia: (MediaAsset) -> Unit,
     onShareAllMedia: (String, List<MediaAsset>, Boolean) -> Unit,
-    onExportVehicle: (Long) -> Unit,
-    onShareFile: (File, String) -> Unit,
-    onImportBackup: () -> Unit
+    onExportVehicle: (Long) -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
@@ -185,13 +166,9 @@ fun AppNavigation(
 
     val currentScreen = navigationStack.last()
     
-    val timestampEnabled by viewModel.timestampEnabled.collectAsState(initial = true)
-    val dateFormat by viewModel.dateFormat.collectAsState(initial = "dd/MM/yyyy HH:mm:ss")
-    val gpsEnabled by viewModel.gpsEnabled.collectAsState(initial = false)
+    val notificationsEnabled by viewModel.notificationsEnabled.collectAsState(initial = true)
     val darkMode by viewModel.darkMode.collectAsState(initial = "auto")
-    val imageQuality by viewModel.imageQuality.collectAsState(initial = 95)
     val shareSummaryEnabled by viewModel.shareSummaryEnabled.collectAsState(initial = true)
-    val captureFeedbackEnabled by viewModel.captureFeedbackEnabled.collectAsState(initial = true)
 
     androidx.activity.compose.BackHandler(enabled = navigationStack.size > 1) {
         navigationStack = navigationStack.dropLast(1)
@@ -210,8 +187,21 @@ fun AppNavigation(
                 onScanClick = { navigationStack = navigationStack + Screen.Verification("") },
                 onWharfScanClick = { navigationStack = navigationStack + Screen.WharfScan },
                 onPrestartClick = { navigationStack = navigationStack + Screen.Prestart(fleetNumberFlow ?: "") },
+                onPhotosClick = { navigationStack = navigationStack + Screen.GlobalPhotos },
                 onSettingsClick = { navigationStack = navigationStack + Screen.Settings },
                 onLogout = { viewModel.logout() }
+            )
+        }
+        is Screen.GlobalPhotos -> {
+            GlobalPhotosScreen(
+                viewModel = viewModel,
+                onPhotoClick = { index -> 
+                    navigationStack = navigationStack + Screen.MediaDetail(0, index) 
+                },
+                onAddPhoto = {
+                    navigationStack = navigationStack + Screen.Camera(0)
+                },
+                onBack = { navigationStack = navigationStack.dropLast(1) }
             )
         }
         is Screen.Prestart -> {
@@ -293,31 +283,21 @@ fun AppNavigation(
         }
         is Screen.Settings -> {
             SettingsScreen(
-                timestampEnabled = timestampEnabled,
-                onTimestampToggle = { viewModel.setTimestampEnabled(it) },
-                currentDateFormat = dateFormat,
-                onDateFormatChange = { viewModel.setDateFormat(it) },
-                gpsEnabled = gpsEnabled,
-                onGpsToggle = { viewModel.setGpsEnabled(it) },
+                notificationsEnabled = notificationsEnabled,
+                onNotificationsToggle = { viewModel.setNotificationsEnabled(it) },
                 darkMode = darkMode,
                 onDarkModeChange = { viewModel.setDarkMode(it) },
-                imageQuality = imageQuality,
-                onImageQualityChange = { viewModel.setImageQuality(it) },
-                shareSummaryEnabled = shareSummaryEnabled,
-                onShareSummaryToggle = { viewModel.setShareSummaryEnabled(it) },
-                captureFeedbackEnabled = captureFeedbackEnabled,
-                onCaptureFeedbackToggle = { viewModel.setCaptureFeedbackEnabled(it) },
                 onBack = { navigationStack = navigationStack.dropLast(1) }
             )
         }
         is Screen.Camera -> {
             CameraScreen(
                 folderId = screen.folderId,
-                timestampEnabled = timestampEnabled,
-                dateFormat = dateFormat,
-                gpsEnabled = gpsEnabled,
-                imageQuality = imageQuality,
-                captureFeedbackEnabled = captureFeedbackEnabled,
+                timestampEnabled = true,
+                dateFormat = "dd/MM/yyyy HH:mm:ss",
+                gpsEnabled = false,
+                imageQuality = 95,
+                captureFeedbackEnabled = true,
                 onMediaCaptured = { filePath, isVideo ->
                     viewModel.addMediaAsset(screen.folderId, filePath, isVideo)
                 },
@@ -340,8 +320,7 @@ fun AppNavigation(
                     viewModel.getFoldersByName(name)
                 },
                 onBack = { 
-                    val previous = if (navigationStack.size > 1) navigationStack[navigationStack.size - 2] else null
-                    if (previous is Screen.Gallery && previous.folderId == screen.folderId) {
+                    if (screen.folderId == 0L) {
                         navigationStack = navigationStack.dropLast(1)
                     } else {
                         navigationStack = navigationStack.dropLast(1) + Screen.Gallery(screen.folderId)
@@ -389,9 +368,9 @@ fun AppNavigation(
         }
         is Screen.MediaDetail -> {
             val folder by viewModel.getFolderById(screen.folderId).collectAsState(initial = null)
-            val mediaAssets by viewModel.getMediaForFolder(screen.folderId).collectAsState(initial = emptyList())
+            val mediaAssets by (if (screen.folderId == 0L) viewModel.allMediaAssets else viewModel.getMediaForFolder(screen.folderId)).collectAsState(initial = emptyList())
             MediaDetailScreen(
-                folderName = folder?.name ?: "Loading...",
+                folderName = if (screen.folderId == 0L) "All Photos" else (folder?.name ?: "Loading..."),
                 mediaAssets = mediaAssets,
                 initialIndex = screen.initialIndex,
                 onDelete = { asset ->

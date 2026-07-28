@@ -14,4 +14,5 @@ sealed class Screen {
     data class Verification(val jobId: String) : Screen()
     data class Prestart(val fleetNumber: String) : Screen()
     object WharfScan : Screen()
+    object GlobalPhotos : Screen()
 }

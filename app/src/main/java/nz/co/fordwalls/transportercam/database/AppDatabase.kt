@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [Folder::class, MediaAsset::class, Job::class], version = 11, exportSchema = false)
+@Database(entities = [Folder::class, MediaAsset::class, Job::class], version = 12, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun transporterDao(): TransporterDao
 
@@ -28,8 +28,9 @@ abstract class AppDatabase : RoomDatabase() {
         val MIGRATION_7_8 = object : Migration(7, 8) { override fun migrate(db: SupportSQLiteDatabase) {} }
         val MIGRATION_8_9 = object : Migration(8, 9) { override fun migrate(db: SupportSQLiteDatabase) {} }
         val MIGRATION_9_10 = object : Migration(9, 10) { override fun migrate(db: SupportSQLiteDatabase) {} }
+        val MIGRATION_10_11 = object : Migration(10, 11) { override fun migrate(db: SupportSQLiteDatabase) {} }
 
-        val MIGRATION_10_11 = object : Migration(10, 11) {
+        val MIGRATION_11_12 = object : Migration(11, 12) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DROP TABLE IF EXISTS jobs")
                 db.execSQL("""
@@ -40,7 +41,8 @@ abstract class AppDatabase : RoomDatabase() {
                         loadInfo TEXT NOT NULL,
                         pickupAddress TEXT NOT NULL DEFAULT '',
                         deliveryAddress TEXT NOT NULL DEFAULT '',
-                        contactInfo TEXT NOT NULL,
+                        pickupContact TEXT NOT NULL DEFAULT '',
+                        deliveryContact TEXT NOT NULL DEFAULT '',
                         notes TEXT,
                         status TEXT NOT NULL,
                         driverName TEXT,
@@ -67,7 +69,8 @@ abstract class AppDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, 
                     MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, 
-                    MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11
+                    MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
+                    MIGRATION_11_12
                 )
                 .fallbackToDestructiveMigration()
                 .build()

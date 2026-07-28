@@ -1,15 +1,26 @@
 package nz.co.fordwalls.transportercam
 
 import android.app.Application
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.media.RingtoneManager
+import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.FirebaseApp
+import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job as CoroutineJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,7 +50,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             FirebaseFirestore.getInstance()
         }
     }
-
+    
     val fleetNumber: Flow<String?> = settingsDataStore.fleetNumber
     private val _isLoggedIn = MutableStateFlow(false)
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn
@@ -66,6 +77,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         combine(flows) { it.toList() }
     }
 
+    val allMediaAssets: Flow<List<MediaAsset>> = dao.getAllMediaAssets()
+
+    val notificationsEnabled: Flow<Boolean> = settingsDataStore.notificationsEnabled
     val timestampEnabled: Flow<Boolean> = settingsDataStore.timestampEnabled
     val dateFormat: Flow<String> = settingsDataStore.dateFormat
     val gpsEnabled: Flow<Boolean> = settingsDataStore.gpsEnabled
@@ -74,7 +88,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val shareSummaryEnabled: Flow<Boolean> = settingsDataStore.shareSummaryEnabled
     val captureFeedbackEnabled: Flow<Boolean> = settingsDataStore.captureFeedbackEnabled
 
+    private var isFirstSync = true
+    private val NOTIFICATION_CHANNEL_ID = "new_jobs_channel"
+    
+    // Batching logic
+    private var pendingNotificationCount = 0
+    private var notificationJob: CoroutineJob? = null
+
     init {
+        createNotificationChannel()
+        
         val settings = FirebaseFirestoreSettings.Builder()
             .setPersistenceEnabled(true)
             .build()
@@ -93,10 +116,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "Job Notifications"
+            val descriptionText = "Alerts for new assigned jobs"
+            val importance = NotificationManager.IMPORTANCE_HIGH
+            val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance).apply {
+                description = descriptionText
+                enableVibration(true)
+                setShowBadge(true)
+            }
+            val notificationManager: NotificationManager =
+                getApplication<Application>().getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
     private fun startJobsListener(fleetNumber: String) {
         stopJobsListener()
         Log.d("FleetDebug", "Starting jobs listener for fleet: $fleetNumber")
         
+        isFirstSync = true
         jobsListener = firestore.collection("jobs")
             .whereEqualTo("fleetNumber", fleetNumber)
             .orderBy("createdAt", Query.Direction.DESCENDING)
@@ -105,6 +145,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     Log.e("FleetDebug", "Firestore Error: ${error.message}", error)
                     return@addSnapshotListener
                 }
+                
+                if (!isFirstSync) {
+                    val newJobsInBatch = snapshot?.documentChanges?.count { it.type == DocumentChange.Type.ADDED } ?: 0
+                    if (newJobsInBatch > 0) {
+                        Log.d("FleetDebug", "$newJobsInBatch new jobs detected in snapshot. Batching...")
+                        triggerBatchedNotification(newJobsInBatch)
+                    }
+                }
+                isFirstSync = false
                 
                 val jobList = mutableListOf<Job>()
                 val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
@@ -129,7 +178,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             loadInfo = data["loadInfo"]?.toString() ?: "",
                             pickupAddress = data["pickupAddress"]?.toString() ?: "",
                             deliveryAddress = data["deliveryAddress"]?.toString() ?: "",
-                            contactInfo = data["contactInfo"]?.toString() ?: "",
+                            pickupContact = data["pickupContact"]?.toString() ?: data["contactInfo"]?.toString() ?: "",
+                            deliveryContact = data["deliveryContact"]?.toString() ?: "",
                             notes = data["notes"]?.toString(),
                             status = try { 
                                 JobStatus.valueOf(data["status"]?.toString() ?: "NEW") 
@@ -162,6 +212,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+    }
+
+    private fun triggerBatchedNotification(count: Int) {
+        pendingNotificationCount += count
+        
+        // Cancel previous timer if it's still waiting
+        notificationJob?.cancel()
+        
+        // Start a new timer
+        notificationJob = viewModelScope.launch {
+            delay(3000) // Wait 3 seconds for more jobs to arrive
+            
+            val enabled = settingsDataStore.notificationsEnabled.map { it }.firstOrNull() ?: true
+            if (enabled) {
+                showJobNotification(pendingNotificationCount)
+            }
+            
+            // Reset for next batch
+            pendingNotificationCount = 0
+        }
+    }
+
+    private fun showJobNotification(count: Int) {
+        val context = getApplication<Application>()
+        Log.d("FleetDebug", "Posting batched notification for $count jobs")
+        
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent: PendingIntent = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+
+        val title = if (count == 1) "New Job Received" else "New Jobs Received"
+        val message = if (count == 1) "A new job has been dispatched to your truck." else "$count new jobs have been dispatched to your truck."
+
+        val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
+        val builder = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setSound(defaultSoundUri)
+            .setVibrate(longArrayOf(500, 500, 500))
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+
+        val notificationManager: NotificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        
+        try {
+            // Use fixed ID to replace previous notification in this batch
+            notificationManager.notify(1001, builder.build())
+        } catch (e: Exception) {
+            Log.e("FleetDebug", "Failed to post notification", e)
+        }
     }
 
     private fun stopJobsListener() {
@@ -210,6 +316,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() {
         viewModelScope.launch {
             settingsDataStore.setFleetNumber(null)
+        }
+    }
+
+    fun setNotificationsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsDataStore.setNotificationsEnabled(enabled)
         }
     }
 
@@ -606,9 +718,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     }
                                 }
                             }
-                            withContext(Dispatchers.Main) { onComplete(true) }
+                            onComplete(true)
                         } catch (e: Exception) {
-                            withContext(Dispatchers.Main) { onComplete(false) }
+                            onComplete(false)
                         } finally {
                             baseDir.deleteRecursively()
                         }

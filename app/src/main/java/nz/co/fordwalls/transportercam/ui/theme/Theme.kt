@@ -15,19 +15,30 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-// Specific FordWalls Blue: Color(0xFF2196F3) or similar to "Scan Booked Vehicle" button
-val FordWallsBlue = Color(0xFF2196F3)
-
 private val DarkColorScheme = darkColorScheme(
     primary = FordWallsBlue,
+    onPrimary = Color.Black,
+    background = BlueBackground,
+    surface = BlueSurface,
+    onBackground = BlueText,
+    onSurface = BlueText,
     secondary = FordWallsBlue.copy(alpha = 0.8f),
     tertiary = FordWallsBlue.copy(alpha = 0.6f)
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = FordWallsBlue,
-    secondary = FordWallsBlue.copy(alpha = 0.8f),
-    tertiary = FordWallsBlue.copy(alpha = 0.6f)
+    primary = FordWallsYellow,
+    onPrimary = Color.Black,
+    background = YellowBackground,
+    surface = YellowSurface,
+    onBackground = YellowText,
+    onSurface = YellowText,
+    onSurfaceVariant = YellowTextSecondary,
+    secondary = Color.Black,
+    onSecondary = Color.White,
+    tertiary = FordWallsYellow.copy(alpha = 0.7f),
+    primaryContainer = FordWallsYellow.copy(alpha = 0.2f),
+    onPrimaryContainer = Color.Black
 )
 
 @Composable
