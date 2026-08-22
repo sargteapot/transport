@@ -49,6 +49,8 @@ fun DashboardScreen(
     val jobs by viewModel.jobs.collectAsState()
     val fleetNumber by viewModel.fleetNumber.collectAsState(initial = "...")
     val tabs = listOf("Today", "New", "WIP", "Done")
+    var showClearDoneConfirmation by remember { mutableStateOf(false) }
+    var clearDoneError by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -112,14 +114,64 @@ fun DashboardScreen(
                             contentPadding = PaddingValues(16.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
+                            if (initialTab == 3) {
+                                item {
+                                    OutlinedButton(
+                                        onClick = { showClearDoneConfirmation = true },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(Icons.Default.ClearAll, contentDescription = null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Clear completed jobs")
+                                    }
+                                }
+                            }
                             items(filteredJobs) { job ->
-                                JobCard(job = job, onClick = { onJobClick(job) })
+                                JobCard(
+                                    job = job,
+                                    onClick = { onJobClick(job) },
+                                    onAccept = if (initialTab == 1) {
+                                        { viewModel.updateJobStatus(job.id, JobStatus.ACCEPTED) }
+                                    } else null
+                                )
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    if (showClearDoneConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showClearDoneConfirmation = false },
+            title = { Text("Clear completed jobs?") },
+            text = { Text("This removes all completed jobs from this truck's Done tab.") },
+            confirmButton = {
+                Button(onClick = {
+                    showClearDoneConfirmation = false
+                    viewModel.clearDoneJobs { success -> clearDoneError = !success }
+                }) {
+                    Text("Clear")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearDoneConfirmation = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (clearDoneError) {
+        AlertDialog(
+            onDismissRequest = { clearDoneError = false },
+            title = { Text("Could not clear jobs") },
+            text = { Text("Please check the connection and try again.") },
+            confirmButton = {
+                TextButton(onClick = { clearDoneError = false }) { Text("OK") }
+            }
+        )
     }
 }
 
@@ -196,7 +248,7 @@ fun DashboardButton(text: String, icon: ImageVector, color: Color, onClick: () -
 }
 
 @Composable
-fun JobCard(job: Job, onClick: () -> Unit) {
+fun JobCard(job: Job, onClick: () -> Unit, onAccept: (() -> Unit)? = null) {
     val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
     val activeContact = if (job.status == JobStatus.PICKED_UP) job.deliveryContact else job.pickupContact
     val contactLabel = if (job.status == JobStatus.PICKED_UP) "Delivery Contact" else "Pickup Contact"
@@ -277,6 +329,18 @@ fun JobCard(job: Job, onClick: () -> Unit) {
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
+                    }
+                }
+
+                if (onAccept != null) {
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = onAccept,
+                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Accept Job", fontWeight = FontWeight.Bold)
                     }
                 }
             }

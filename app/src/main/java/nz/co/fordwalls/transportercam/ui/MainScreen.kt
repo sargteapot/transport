@@ -85,7 +85,7 @@ fun MainScreen(
                         }
                         Spacer(Modifier.height(16.dp))
                         Text(
-                            "TransporterCam", 
+                            "FW Driver",
                             style = MaterialTheme.typography.displaySmall, 
                             fontWeight = FontWeight.ExtraBold,
                             color = MaterialTheme.colorScheme.onSurface

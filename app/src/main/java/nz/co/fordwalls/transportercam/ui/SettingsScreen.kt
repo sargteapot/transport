@@ -15,19 +15,34 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
+import nz.co.fordwalls.transportercam.BuildConfig
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    companyName: String,
+    companyId: String,
     notificationsEnabled: Boolean,
     onNotificationsToggle: (Boolean) -> Unit,
     darkMode: String,
     onDarkModeChange: (String) -> Unit,
+    onChangeCompany: () -> Unit,
     onBack: () -> Unit
 ) {
     val darkModeOptions = listOf("auto" to "Follow System", "on" to "On", "off" to "Off")
     var darkExpanded by remember { mutableStateOf(false) }
     var showChangeLog by remember { mutableStateOf(false) }
+    var confirmCompanyChange by remember { mutableStateOf(false) }
+
+    if (confirmCompanyChange) {
+        AlertDialog(
+            onDismissRequest = { confirmCompanyChange = false },
+            title = { Text("Change company?") },
+            text = { Text("This signs you out and stops the current company session. Local work remains attached to $companyName.") },
+            confirmButton = { TextButton(onClick = onChangeCompany) { Text("Sign out & change") } },
+            dismissButton = { TextButton(onClick = { confirmCompanyChange = false }) { Text("Cancel") } }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -48,6 +63,19 @@ fun SettingsScreen(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
+            SettingsSection(title = "Company") {
+                ListItem(
+                    headlineContent = { Text(companyName) },
+                    supportingContent = { Text(companyId) },
+                    leadingContent = { Icon(Icons.Default.Business, null) }
+                )
+                OutlinedButton(onClick = { confirmCompanyChange = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Change company")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
             SettingsSection(title = "Alerts") {
                 SettingsSwitchRow(
                     title = "Job Notifications",
@@ -127,7 +155,7 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(48.dp))
             
             Text(
-                "Fleet Documentation v1.3",
+                "FW Driver v${BuildConfig.VERSION_NAME}",
                 modifier = Modifier.align(Alignment.CenterHorizontally),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline
@@ -194,10 +222,13 @@ fun SettingsDropdownRow(title: String, subtitle: String, currentValue: String, o
 @Composable
 fun SettingsScreenPreview() {
     SettingsScreen(
+        companyName = "FordWalls",
+        companyId = "fordwalls",
         notificationsEnabled = true,
         onNotificationsToggle = {},
         darkMode = "auto",
         onDarkModeChange = {},
+        onChangeCompany = {},
         onBack = {}
     )
 }

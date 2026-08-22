@@ -75,7 +75,7 @@ class ExportManager(private val context: Context) {
             exportVehicleToDirectory(folder, assets, vehicleDir)
         }
 
-        val zipFile = File(context.cacheDir, "TransporterCam_Backup_${System.currentTimeMillis()}.zip")
+        val zipFile = File(context.cacheDir, "FW_Driver_Backup_${System.currentTimeMillis()}.zip")
         try {
             zipFolder(tempDir, zipFile)
             tempDir.deleteRecursively()

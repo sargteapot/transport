@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [Folder::class, MediaAsset::class, Job::class], version = 12, exportSchema = false)
+@Database(entities = [Folder::class, MediaAsset::class, Job::class], version = 13, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun transporterDao(): TransporterDao
 
@@ -59,6 +59,33 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE folders ADD COLUMN companyId TEXT NOT NULL DEFAULT 'fordwalls'")
+                db.execSQL("ALTER TABLE jobs RENAME TO jobs_old")
+                db.execSQL("""
+                    CREATE TABLE jobs (
+                        companyId TEXT NOT NULL, id TEXT NOT NULL, fleetNumber TEXT NOT NULL,
+                        rego TEXT NOT NULL, loadInfo TEXT NOT NULL, pickupAddress TEXT NOT NULL,
+                        deliveryAddress TEXT NOT NULL, pickupContact TEXT NOT NULL,
+                        deliveryContact TEXT NOT NULL, notes TEXT, status TEXT NOT NULL,
+                        driverName TEXT, driverSignatureUrl TEXT, customerName TEXT,
+                        customerSignatureUrl TEXT, pickupChecklistJson TEXT,
+                        dropoffChecklistJson TEXT, createdAt INTEGER NOT NULL,
+                        dispatchedBy TEXT, photoUrls TEXT, PRIMARY KEY(companyId, id)
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    INSERT INTO jobs SELECT 'fordwalls', id, fleetNumber, rego, loadInfo,
+                        pickupAddress, deliveryAddress, pickupContact, deliveryContact, notes,
+                        status, driverName, driverSignatureUrl, customerName, customerSignatureUrl,
+                        pickupChecklistJson, dropoffChecklistJson, createdAt, dispatchedBy, photoUrls
+                    FROM jobs_old
+                """.trimIndent())
+                db.execSQL("DROP TABLE jobs_old")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -70,9 +97,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, 
                     MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, 
                     MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-                    MIGRATION_11_12
+                    MIGRATION_11_12, MIGRATION_12_13
                 )
-                .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance
                 instance

@@ -30,9 +30,11 @@ data class PrestartItem(
 fun PrestartScreen(
     fleetNumber: String,
     viewModel: MainViewModel,
+    allowBack: Boolean = true,
     onComplete: () -> Unit,
     onBack: () -> Unit
 ) {
+    androidx.activity.compose.BackHandler(enabled = !allowBack) { }
     val truckItems = listOf(
         "Engine Oil", "Start Engine", "Right Front Tyres", "Right Body Lights",
         "Right Rear Tyres", "Rear Tail Lights", "Hazard Lights"
@@ -62,8 +64,10 @@ fun PrestartScreen(
             TopAppBar(
                 title = { Text("Pre-start: $fleetNumber") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    if (allowBack) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
                     }
                 }
             )
@@ -89,8 +93,8 @@ fun PrestartScreen(
                     modifier = Modifier.fillMaxWidth().height(120.dp),
                     placeholder = { Text("Any issues or comments...") },
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 )
             }
@@ -104,7 +108,7 @@ fun PrestartScreen(
                             if (success) onComplete()
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().height(56.dp).padding(vertical = 16.dp),
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
                     enabled = !isSaving
                 ) {
                     if (isSaving) CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
@@ -137,8 +141,8 @@ fun PrestartRow(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 )
             } else {

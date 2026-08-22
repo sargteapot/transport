@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -20,6 +21,10 @@ class SettingsDataStore(private val context: Context) {
         val SHARE_SUMMARY_ENABLED = booleanPreferencesKey("share_summary_enabled")
         val CAPTURE_FEEDBACK_ENABLED = booleanPreferencesKey("capture_feedback_enabled")
         val FLEET_NUMBER = stringPreferencesKey("fleet_number")
+        val SELECTED_COMPANY_ID = stringPreferencesKey("selected_company_id")
+        val SELECTED_COMPANY_NAME = stringPreferencesKey("selected_company_name")
+        val DRIVER_DOCUMENT_ID = stringPreferencesKey("driver_document_id")
+        val SESSION_STARTED_AT = longPreferencesKey("session_started_at")
         val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         
         const val DEFAULT_DATE_FORMAT = "dd/MM/yyyy HH:mm:ss"
@@ -27,6 +32,59 @@ class SettingsDataStore(private val context: Context) {
 
     val fleetNumber: Flow<String?> = context.dataStore.data.map { preferences ->
         preferences[FLEET_NUMBER]
+    }
+
+    val selectedCompanyId: Flow<String?> = context.dataStore.data.map { it[SELECTED_COMPANY_ID] }
+    val selectedCompanyName: Flow<String?> = context.dataStore.data.map { it[SELECTED_COMPANY_NAME] }
+    val driverDocumentId: Flow<String?> = context.dataStore.data.map { it[DRIVER_DOCUMENT_ID] }
+    val sessionStartedAt: Flow<Long?> = context.dataStore.data.map { it[SESSION_STARTED_AT] }
+
+    suspend fun migrateExistingSessionToFordWalls() {
+        val preferences = context.dataStore.data.first()
+        if (preferences[FLEET_NUMBER] != null && preferences[SELECTED_COMPANY_ID] == null) {
+            context.dataStore.edit {
+                it[SELECTED_COMPANY_ID] = TenantFirestorePaths.FORDWALLS_ID
+                it[SELECTED_COMPANY_NAME] = "FordWalls"
+                it.remove(FLEET_NUMBER)
+                it.remove(SESSION_STARTED_AT)
+            }
+        }
+    }
+
+    suspend fun selectCompany(company: CompanySummary) {
+        context.dataStore.edit {
+            it[SELECTED_COMPANY_ID] = company.id
+            it[SELECTED_COMPANY_NAME] = company.name
+            it.remove(DRIVER_DOCUMENT_ID)
+            it.remove(FLEET_NUMBER)
+            it.remove(SESSION_STARTED_AT)
+        }
+    }
+
+    suspend fun commitDriverSession(driverId: String, fleet: String, startedAt: Long = System.currentTimeMillis()) {
+        context.dataStore.edit {
+            it[DRIVER_DOCUMENT_ID] = driverId
+            it[FLEET_NUMBER] = fleet
+            it[SESSION_STARTED_AT] = startedAt
+        }
+    }
+
+    suspend fun clearDriverSession() {
+        context.dataStore.edit {
+            it.remove(DRIVER_DOCUMENT_ID)
+            it.remove(FLEET_NUMBER)
+            it.remove(SESSION_STARTED_AT)
+        }
+    }
+
+    suspend fun clearCompanyAndDriverSession() {
+        context.dataStore.edit {
+            it.remove(SELECTED_COMPANY_ID)
+            it.remove(SELECTED_COMPANY_NAME)
+            it.remove(DRIVER_DOCUMENT_ID)
+            it.remove(FLEET_NUMBER)
+            it.remove(SESSION_STARTED_AT)
+        }
     }
 
     val notificationsEnabled: Flow<Boolean> = context.dataStore.data.map { preferences ->

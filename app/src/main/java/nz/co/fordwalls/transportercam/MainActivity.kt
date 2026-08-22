@@ -11,7 +11,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import nz.co.fordwalls.transportercam.database.Job
@@ -139,28 +144,28 @@ fun AppNavigation(
     val context = androidx.compose.ui.platform.LocalContext.current
     val isLoggedIn by viewModel.isLoggedIn.collectAsState()
     val fleetNumberFlow by viewModel.fleetNumber.collectAsState(initial = null)
+    val companyId by viewModel.selectedCompanyId.collectAsState(initial = null)
+    val companyName by viewModel.selectedCompanyName.collectAsState(initial = null)
+    val prestartRequired by viewModel.prestartRequired.collectAsState()
     
     // Lifted Tab State for Persistence
     var selectedTabIndex by remember { mutableIntStateOf(0) }
 
     var navigationStack by remember { 
         mutableStateOf(
-            listOf<Screen>(
-                if (!isLoggedIn) Screen.Login 
-                else Screen.Dashboard
-            )
+            listOf<Screen>(Screen.CompanySelect)
         ) 
     }
     
-    LaunchedEffect(isLoggedIn) {
-        if (!isLoggedIn) {
-            if (navigationStack.last() != Screen.Login) {
-                navigationStack = listOf(Screen.Login)
-            }
-        } else {
-            if (navigationStack.last() == Screen.Login) {
-                navigationStack = listOf(Screen.Dashboard)
-            }
+    LaunchedEffect(companyId, isLoggedIn, prestartRequired) {
+        val entryScreen = navigationStack.lastOrNull() in listOf(Screen.CompanySelect, Screen.Login, Screen.SessionStartup) || navigationStack.lastOrNull() is Screen.PrestartDue
+        navigationStack = when {
+            companyId == null -> listOf(Screen.CompanySelect)
+            !isLoggedIn && navigationStack.lastOrNull() != Screen.Login -> listOf(Screen.Login)
+            isLoggedIn && prestartRequired == null && entryScreen -> listOf(Screen.SessionStartup)
+            isLoggedIn && prestartRequired == true && entryScreen -> listOf(Screen.PrestartDue(fleetNumberFlow ?: ""))
+            isLoggedIn && prestartRequired == false && entryScreen -> listOf(Screen.Dashboard)
+            else -> navigationStack
         }
     }
 
@@ -175,8 +180,37 @@ fun AppNavigation(
     }
 
     when (val screen = currentScreen) {
+        is Screen.CompanySelect -> {
+            CompanySelectScreen(viewModel = viewModel, onCompanySelected = {})
+        }
+        is Screen.SessionStartup -> {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Text("Checking today's pre-start…", modifier = Modifier.padding(top = 16.dp))
+                }
+            }
+        }
+        is Screen.PrestartDue -> {
+            AlertDialog(
+                onDismissRequest = {},
+                title = { Text("Pre-start due") },
+                text = { Text("A pre-start inspection has not been completed for this vehicle today. You must complete it before continuing.") },
+                confirmButton = {
+                    Button(onClick = {
+                        navigationStack = listOf(Screen.Prestart(screen.fleetNumber, forced = true))
+                    }) { Text("OK") }
+                }
+            )
+        }
         is Screen.Login -> {
-            LoginScreen(viewModel = viewModel, onLoginSuccess = {})
+            val company = CompanySummary(companyId ?: "", companyName ?: companyId ?: "Company")
+            LoginScreen(
+                viewModel = viewModel,
+                company = company,
+                onChangeCompany = { viewModel.changeCompany() },
+                onLoginSuccess = {}
+            )
         }
         is Screen.Dashboard -> {
             DashboardScreen(
@@ -186,7 +220,7 @@ fun AppNavigation(
                 onJobClick = { job -> navigationStack = navigationStack + Screen.JobDetail(job.id) },
                 onScanClick = { navigationStack = navigationStack + Screen.Verification("") },
                 onWharfScanClick = { navigationStack = navigationStack + Screen.WharfScan },
-                onPrestartClick = { navigationStack = navigationStack + Screen.Prestart(fleetNumberFlow ?: "") },
+                onPrestartClick = { navigationStack = navigationStack + Screen.Prestart(fleetNumberFlow ?: "", forced = false) },
                 onPhotosClick = { navigationStack = navigationStack + Screen.GlobalPhotos },
                 onSettingsClick = { navigationStack = navigationStack + Screen.Settings },
                 onLogout = { viewModel.logout() }
@@ -208,11 +242,12 @@ fun AppNavigation(
             PrestartScreen(
                 fleetNumber = screen.fleetNumber,
                 viewModel = viewModel,
+                allowBack = !screen.forced,
                 onComplete = {
-                    navigationStack = navigationStack.dropLast(1)
+                    navigationStack = listOf(Screen.Dashboard)
                     Toast.makeText(context, "Pre-start submitted!", Toast.LENGTH_SHORT).show()
                 },
-                onBack = { navigationStack = navigationStack.dropLast(1) }
+                onBack = { if (!screen.forced) navigationStack = navigationStack.dropLast(1) }
             )
         }
         is Screen.WharfScan -> {
@@ -283,10 +318,13 @@ fun AppNavigation(
         }
         is Screen.Settings -> {
             SettingsScreen(
+                companyName = companyName ?: companyId ?: "Unknown",
+                companyId = companyId ?: "",
                 notificationsEnabled = notificationsEnabled,
                 onNotificationsToggle = { viewModel.setNotificationsEnabled(it) },
                 darkMode = darkMode,
                 onDarkModeChange = { viewModel.setDarkMode(it) },
+                onChangeCompany = { viewModel.changeCompany() },
                 onBack = { navigationStack = navigationStack.dropLast(1) }
             )
         }

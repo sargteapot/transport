@@ -1,7 +1,6 @@
 package nz.co.fordwalls.transportercam.database
 
 import androidx.room.Entity
-import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -10,9 +9,10 @@ enum class JobStatus {
 }
 
 @Serializable
-@Entity(tableName = "jobs")
+@Entity(tableName = "jobs", primaryKeys = ["companyId", "id"])
 data class Job(
-    @PrimaryKey val id: String = "",
+    val companyId: String = "fordwalls",
+    val id: String = "",
     val fleetNumber: String = "",
     val rego: String = "",
     val loadInfo: String = "",

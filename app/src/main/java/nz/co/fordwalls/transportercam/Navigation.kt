@@ -1,6 +1,9 @@
 package nz.co.fordwalls.transportercam
 
 sealed class Screen {
+    object CompanySelect : Screen()
+    object SessionStartup : Screen()
+    data class PrestartDue(val fleetNumber: String) : Screen()
     object Login : Screen()
     object Dashboard : Screen()
     object FolderList : Screen()
@@ -12,7 +15,7 @@ sealed class Screen {
     data class JobDetail(val jobId: String) : Screen()
     data class Signature(val jobId: String, val isDriver: Boolean) : Screen()
     data class Verification(val jobId: String) : Screen()
-    data class Prestart(val fleetNumber: String) : Screen()
+    data class Prestart(val fleetNumber: String, val forced: Boolean = false) : Screen()
     object WharfScan : Screen()
     object GlobalPhotos : Screen()
 }

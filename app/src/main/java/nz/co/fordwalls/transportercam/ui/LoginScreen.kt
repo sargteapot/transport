@@ -17,10 +17,13 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import nz.co.fordwalls.transportercam.MainViewModel
+import nz.co.fordwalls.transportercam.CompanySummary
 
 @Composable
 fun LoginScreen(
     viewModel: MainViewModel,
+    company: CompanySummary,
+    onChangeCompany: () -> Unit,
     onLoginSuccess: () -> Unit
 ) {
     var username by remember { mutableStateOf("") }
@@ -49,7 +52,7 @@ fun LoginScreen(
             )
             
             Text(
-                text = "Fleet Documentation",
+                text = "FW Driver",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.primary,
@@ -61,6 +64,13 @@ fun LoginScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 32.dp)
+            )
+
+            AssistChip(
+                onClick = onChangeCompany,
+                label = { Text(company.name) },
+                leadingIcon = { Icon(Icons.Default.Business, null) },
+                modifier = Modifier.padding(bottom = 20.dp)
             )
 
             // Input Fields
@@ -133,7 +143,7 @@ fun LoginScreen(
                     }
                     isLoading = true
                     errorMessage = null
-                    viewModel.unifiedLogin(username, password, fleetNumber) { success, msg ->
+                    viewModel.unifiedLogin(company.id, username, password, fleetNumber) { success, msg ->
                         isLoading = false
                         if (success) {
                             onLoginSuccess()

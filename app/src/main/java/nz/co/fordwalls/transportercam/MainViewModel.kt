@@ -14,6 +14,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.DocumentChange
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.ListenerRegistration
@@ -38,35 +39,59 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
+private data class StoredSession(
+    val companyId: String?,
+    val driverId: String?,
+    val fleetNumber: String?,
+    val startedAt: Long?
+)
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val dao: TransporterDao = AppDatabase.getDatabase(application).transporterDao()
     private val settingsDataStore = SettingsDataStore(application)
     
-    private val firestore: FirebaseFirestore by lazy {
-        try {
-            FirebaseFirestore.getInstance(FirebaseApp.getInstance(), "transport")
-        } catch (e: Exception) {
-            Log.e("FleetDebug", "Failed to get 'transport' database, falling back to default", e)
-            FirebaseFirestore.getInstance()
-        }
+    private val firestoreResult = runCatching {
+        FirebaseFirestore.getInstance(FirebaseApp.getInstance(), "transport")
     }
+    private val firestore: FirebaseFirestore get() = firestoreResult.getOrThrow()
+    private val paths by lazy { TenantFirestorePaths(firestore) }
     
     val fleetNumber: Flow<String?> = settingsDataStore.fleetNumber
+    val selectedCompanyId: Flow<String?> = settingsDataStore.selectedCompanyId
+    val selectedCompanyName: Flow<String?> = settingsDataStore.selectedCompanyName
+    val driverDocumentId: Flow<String?> = settingsDataStore.driverDocumentId
+    val sessionStartedAt: Flow<Long?> = settingsDataStore.sessionStartedAt
     private val _isLoggedIn = MutableStateFlow(false)
     val isLoggedIn: StateFlow<Boolean> = _isLoggedIn
+    private val _companies = MutableStateFlow<List<CompanySummary>>(emptyList())
+    val companies: StateFlow<List<CompanySummary>> = _companies
+    private val _companiesLoading = MutableStateFlow(true)
+    val companiesLoading: StateFlow<Boolean> = _companiesLoading
+    private val _companyLoadError = MutableStateFlow<String?>(null)
+    val companyLoadError: StateFlow<String?> = _companyLoadError
+    private val _companyListOffline = MutableStateFlow(false)
+    val companyListOffline: StateFlow<Boolean> = _companyListOffline
+    private val _activeCompanyId = MutableStateFlow<String?>(null)
+    private val _prestartRequired = MutableStateFlow<Boolean?>(null)
+    val prestartRequired: StateFlow<Boolean?> = _prestartRequired
+    private val _prestartCheckError = MutableStateFlow<String?>(null)
+    val prestartCheckError: StateFlow<String?> = _prestartCheckError
 
     private var jobsListener: ListenerRegistration? = null
     private val _jobs = MutableStateFlow<List<Job>>(emptyList())
     val jobs: StateFlow<List<Job>> = _jobs
 
-    val allFolders: Flow<List<Folder>> = dao.getAllFolders()
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val allFolders: Flow<List<Folder>> = selectedCompanyId.flatMapLatest { companyId ->
+        if (companyId == null) kotlinx.coroutines.flow.flowOf(emptyList()) else dao.getAllFolders(companyId)
+    }
     
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val foldersWithTimestamps: Flow<List<FolderWithTimestamps>> = dao.getAllFolders().flatMapLatest { folders ->
+    val foldersWithTimestamps: Flow<List<FolderWithTimestamps>> = allFolders.flatMapLatest { folders ->
         if (folders.isEmpty()) return@flatMapLatest kotlinx.coroutines.flow.flowOf(emptyList())
         
         val flows = folders.map { folder ->
-            dao.getMediaForFolder(folder.id).map { media ->
+            dao.getMediaForFolder(folder.companyId, folder.id).map { media ->
                 FolderWithTimestamps(
                     folder = folder,
                     earliestMedia = media.minByOrNull { it.timestamp }?.timestamp,
@@ -77,7 +102,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         combine(flows) { it.toList() }
     }
 
-    val allMediaAssets: Flow<List<MediaAsset>> = dao.getAllMediaAssets()
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val allMediaAssets: Flow<List<MediaAsset>> = selectedCompanyId.flatMapLatest { companyId ->
+        if (companyId == null) kotlinx.coroutines.flow.flowOf(emptyList()) else dao.getAllMediaAssets(companyId)
+    }
 
     val notificationsEnabled: Flow<Boolean> = settingsDataStore.notificationsEnabled
     val timestampEnabled: Flow<Boolean> = settingsDataStore.timestampEnabled
@@ -94,26 +122,120 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // Batching logic
     private var pendingNotificationCount = 0
     private var notificationJob: CoroutineJob? = null
+    private var sessionExpiryJob: CoroutineJob? = null
+    private var activeSessionKey: String? = null
 
     init {
         createNotificationChannel()
-        
-        val settings = FirebaseFirestoreSettings.Builder()
-            .setPersistenceEnabled(true)
-            .build()
-        firestore.firestoreSettings = settings
+        if (firestoreResult.isFailure) {
+            _companiesLoading.value = false
+            _companyLoadError.value = "Cannot connect to the required Firestore database 'transport'."
+            Log.e("FleetDebug", "Named Firestore database initialization failed", firestoreResult.exceptionOrNull())
+        } else {
+            val settings = FirebaseFirestoreSettings.Builder()
+                .setPersistenceEnabled(true)
+                .build()
+            firestore.firestoreSettings = settings
 
-        viewModelScope.launch {
-            fleetNumber.collect { number ->
-                if (number != null) {
-                    _isLoggedIn.value = true
-                    startJobsListener(number)
-                } else {
-                    _isLoggedIn.value = false
-                    stopJobsListener()
+            viewModelScope.launch { settingsDataStore.migrateExistingSessionToFordWalls() }
+            viewModelScope.launch {
+                combine(selectedCompanyId, driverDocumentId, fleetNumber, sessionStartedAt) { company, driver, fleet, startedAt ->
+                    StoredSession(company, driver, fleet, startedAt)
+                }.collect { session ->
+                    val company = session.companyId
+                    val driver = session.driverId
+                    val fleet = session.fleetNumber
+                    val startedAt = session.startedAt
+                    _activeCompanyId.value = company
+                    val complete = !company.isNullOrBlank() && !driver.isNullOrBlank() && !fleet.isNullOrBlank() && startedAt != null
+                    val valid = complete && !SessionPolicy.isExpired(startedAt!!)
+                    _isLoggedIn.value = valid
+                    if (valid) {
+                        val sessionKey = "$company::$driver::$fleet::$startedAt"
+                        if (activeSessionKey != sessionKey) {
+                            activeSessionKey = sessionKey
+                            startJobsListener(company!!, fleet!!)
+                            scheduleSessionExpiry(sessionKey, startedAt!!)
+                            checkDailyPrestart(company, fleet)
+                        }
+                    } else {
+                        if (complete && SessionPolicy.isExpired(startedAt!!)) {
+                            settingsDataStore.clearDriverSession()
+                        }
+                        activeSessionKey = null
+                        sessionExpiryJob?.cancel()
+                        stopJobsListener()
+                        _jobs.value = emptyList()
+                        _prestartRequired.value = null
+                    }
                 }
             }
+            loadCompanies()
         }
+    }
+
+    private fun scheduleSessionExpiry(sessionKey: String, startedAt: Long) {
+        sessionExpiryJob?.cancel()
+        sessionExpiryJob = viewModelScope.launch {
+            delay(SessionPolicy.remainingMillis(startedAt))
+            if (activeSessionKey == sessionKey) logout()
+        }
+    }
+
+    private fun checkDailyPrestart(companyId: String, fleet: String) {
+        val sessionKey = activeSessionKey
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        _prestartRequired.value = null
+        _prestartCheckError.value = null
+        paths.prestarts(companyId, fleet).whereEqualTo("date", today).limit(1).get()
+            .addOnSuccessListener { snapshot ->
+                if (activeSessionKey != sessionKey) return@addOnSuccessListener
+                _prestartRequired.value = snapshot.isEmpty
+                Log.d(
+                    "FleetDebug",
+                    "Daily pre-start check $companyId/$fleet date=$today found=${snapshot.size()} ids=${snapshot.documents.joinToString { it.id }}"
+                )
+            }
+            .addOnFailureListener { error ->
+                if (activeSessionKey != sessionKey) return@addOnFailureListener
+                _prestartCheckError.value = "Could not verify today's pre-start: ${error.localizedMessage}"
+                _prestartRequired.value = true
+                Log.e("FleetDebug", "Daily pre-start check failed for $companyId/$fleet", error)
+            }
+    }
+
+    fun loadCompanies() {
+        if (firestoreResult.isFailure) {
+            _companiesLoading.value = false
+            _companyLoadError.value = "Cannot connect to the required Firestore database 'transport'."
+            return
+        }
+        _companiesLoading.value = true
+        _companyLoadError.value = null
+        paths.companies().whereEqualTo("active", true).get()
+            .addOnSuccessListener { snapshot ->
+                _companies.value = snapshot.documents.mapNotNull { doc ->
+                    val name = doc.getString("name") ?: return@mapNotNull null
+                    CompanySummary(doc.id.lowercase(), name, doc.getString("shortName"), doc.getString("accentColor"))
+                }.sortedBy { it.name }
+                _companyListOffline.value = snapshot.metadata.isFromCache
+                _companiesLoading.value = false
+                if (_companies.value.isEmpty()) {
+                    _companyLoadError.value = "No active companies are configured in the company directory."
+                }
+                Log.d("FleetDebug", "Company directory returned ${_companies.value.size} active companies; cache=${snapshot.metadata.isFromCache}")
+            }
+            .addOnFailureListener { error ->
+                _companiesLoading.value = false
+                _companyListOffline.value = _companies.value.isNotEmpty()
+                _companyLoadError.value = if (_companies.value.isEmpty())
+                    "Unable to load companies: ${error.localizedMessage}" else null
+                Log.e("FleetDebug", "Company directory read failed", error)
+            }
+    }
+
+    fun selectCompany(company: CompanySummary) {
+        viewModelScope.launch { settingsDataStore.selectCompany(company) }
     }
 
     private fun createNotificationChannel() {
@@ -132,15 +254,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun startJobsListener(fleetNumber: String) {
+    private fun startJobsListener(companyId: String, fleetNumber: String) {
         stopJobsListener()
         Log.d("FleetDebug", "Starting jobs listener for fleet: $fleetNumber")
         
         isFirstSync = true
-        jobsListener = firestore.collection("jobs")
+        jobsListener = paths.jobs(companyId)
             .whereEqualTo("fleetNumber", fleetNumber)
             .orderBy("createdAt", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, error ->
+                if (_activeCompanyId.value != companyId) return@addSnapshotListener
                 if (error != null) {
                     Log.e("FleetDebug", "Firestore Error: ${error.message}", error)
                     return@addSnapshotListener
@@ -163,6 +286,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 snapshot?.documents?.forEach { doc ->
                     try {
                         val data = doc.data ?: return@forEach
+
+                        val clearedFromFleets = data["clearedFromFleets"] as? List<*>
+                        if (clearedFromFleets?.any { it?.toString() == fleetNumber } == true) {
+                            return@forEach
+                        }
                         
                         val createdAtRaw = data["createdAt"]
                         val createdAtMs = when (createdAtRaw) {
@@ -172,6 +300,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
 
                         val job = Job(
+                            companyId = companyId,
                             id = doc.id,
                             fleetNumber = data["fleetNumber"]?.toString() ?: "",
                             rego = data["rego"]?.toString() ?: "UNKNOWN",
@@ -240,6 +369,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            putExtra("companyId", _activeCompanyId.value)
         }
         val pendingIntent: PendingIntent = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE)
 
@@ -273,28 +403,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun stopJobsListener() {
         jobsListener?.remove()
         jobsListener = null
+        notificationJob?.cancel()
+        notificationJob = null
+        pendingNotificationCount = 0
     }
 
-    fun unifiedLogin(username: String, pass: String, fleet: String, onResult: (Boolean, String?) -> Unit) {
+    fun unifiedLogin(companyId: String, username: String, pass: String, fleet: String, onResult: (Boolean, String?) -> Unit) {
         val upperFleet = fleet.trim().uppercase()
         val user = username.trim()
         
         Log.d("FleetDebug", "Attempting login for: $user, Fleet: $upperFleet")
         
-        firestore.collection("fleets").document(upperFleet).get()
+        if (_activeCompanyId.value != companyId) {
+            onResult(false, "Company selection changed. Please try again.")
+            return
+        }
+        paths.fleets(companyId).document(upperFleet).get()
             .addOnSuccessListener { fleetDoc ->
                 if (fleetDoc.exists()) {
-                    firestore.collection("drivers")
+                    paths.drivers(companyId)
                         .whereEqualTo("username", user)
                         .whereEqualTo("password", pass)
                         .get()
                         .addOnSuccessListener { driverSnapshot ->
                             if (!driverSnapshot.isEmpty) {
                                 viewModelScope.launch {
-                                    settingsDataStore.setFleetNumber(upperFleet)
                                     val driverDocId = driverSnapshot.documents[0].id
-                                    firestore.collection("drivers").document(driverDocId)
+                                    if (_activeCompanyId.value != companyId) {
+                                        withContext(Dispatchers.Main) { onResult(false, "Company selection changed. Please try again.") }
+                                        return@launch
+                                    }
+                                    paths.drivers(companyId).document(driverDocId)
                                         .update("currentFleetNumber", upperFleet)
+                                    settingsDataStore.commitDriverSession(driverDocId, upperFleet)
                                     withContext(Dispatchers.Main) { onResult(true, null) }
                                 }
                             } else {
@@ -305,7 +446,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             onResult(false, "Auth check failed: ${e.localizedMessage}")
                         }
                 } else {
-                    onResult(false, "Truck '$upperFleet' is not registered.")
+                    onResult(false, "Invalid username or password.")
                 }
             }
             .addOnFailureListener { e ->
@@ -314,9 +455,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logout() {
+        activeSessionKey = null
+        sessionExpiryJob?.cancel()
+        sessionExpiryJob = null
+        stopJobsListener()
+        _jobs.value = emptyList()
         viewModelScope.launch {
-            settingsDataStore.setFleetNumber(null)
+            settingsDataStore.clearDriverSession()
         }
+    }
+
+    fun changeCompany() {
+        activeSessionKey = null
+        sessionExpiryJob?.cancel()
+        sessionExpiryJob = null
+        stopJobsListener()
+        _jobs.value = emptyList()
+        viewModelScope.launch { settingsDataStore.clearCompanyAndDriverSession() }
     }
 
     fun setNotificationsEnabled(enabled: Boolean) {
@@ -327,6 +482,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun savePrestart(fleet: String, items: List<PrestartItem>, notes: String, onComplete: (Boolean) -> Unit) {
         viewModelScope.launch {
+            val companyId = _activeCompanyId.value ?: return@launch onComplete(false)
             val now = Date()
             val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(now)
             val timeStr = SimpleDateFormat("HH-mm-ss", Locale.getDefault()).format(now)
@@ -344,11 +500,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 "time" to timeStr
             )
 
-            firestore.collection("fleets").document(fleet)
-                .collection("prestarts").document(docId)
+            paths.prestarts(companyId, fleet).document(docId)
                 .set(payload)
                 .addOnSuccessListener {
                     Log.d("FleetDebug", "Prestart saved successfully: $docId")
+                    if (_activeCompanyId.value == companyId) {
+                        _prestartRequired.value = false
+                        _prestartCheckError.value = null
+                    }
                     viewModelScope.launch { withContext(Dispatchers.Main) { onComplete(true) } }
                 }
                 .addOnFailureListener { e ->
@@ -360,9 +519,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun searchAndClaimWharfJob(rego: String, onResult: (Boolean, String?) -> Unit) {
         val upperRego = rego.trim().uppercase()
+        val companyId = _activeCompanyId.value ?: return onResult(false, "Driver session error.")
         Log.d("FleetDebug", "Wharf Scan: Searching for $upperRego")
         
-        firestore.collection("jobs")
+        paths.jobs(companyId)
             .whereEqualTo("rego", upperRego)
             .whereEqualTo("status", JobStatus.ONSCAN.name)
             .get()
@@ -378,7 +538,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             return@launch
                         }
 
-                        firestore.collection("jobs").document(jobId)
+                        if (_activeCompanyId.value != companyId) {
+                            withContext(Dispatchers.Main) { onResult(false, "Company selection changed.") }
+                            return@launch
+                        }
+                        paths.jobs(companyId).document(jobId)
                             .update(mapOf(
                                 "status" to JobStatus.ACCEPTED.name,
                                 "fleetNumber" to currentFleet
@@ -402,14 +566,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateJobStatus(jobId: String, status: JobStatus) {
+        val companyId = _activeCompanyId.value ?: return
         Log.d("FleetDebug", "Updating job $jobId to status: ${status.name}")
-        firestore.collection("jobs").document(jobId)
+        paths.jobs(companyId).document(jobId)
             .update("status", status.name)
             .addOnSuccessListener {
                 Log.d("FleetDebug", "Firestore status update success for $jobId")
                 viewModelScope.launch {
                     try {
-                        dao.updateJobStatus(jobId, status)
+                        dao.updateJobStatus(companyId, jobId, status)
                     } catch (e: Exception) {
                         Log.e("FleetDebug", "Local DB update failed for $jobId: ${e.message}")
                     }
@@ -420,11 +585,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    fun clearDoneJobs(onComplete: (Boolean) -> Unit) {
+        val companyId = _activeCompanyId.value ?: return onComplete(false)
+        val fleet = _jobs.value.firstOrNull()?.fleetNumber
+            ?: return onComplete(true)
+        val doneJobs = _jobs.value.filter { it.status == JobStatus.DONE }
+        if (doneJobs.isEmpty()) return onComplete(true)
+
+        val batches = doneJobs.chunked(450)
+
+        fun commitBatch(index: Int) {
+            if (index >= batches.size) {
+                onComplete(true)
+                return
+            }
+
+            val batch = firestore.batch()
+            batches[index].forEach { job ->
+                batch.update(
+                    paths.jobs(companyId).document(job.id),
+                    "clearedFromFleets",
+                    FieldValue.arrayUnion(fleet)
+                )
+            }
+            batch.commit()
+                .addOnSuccessListener { commitBatch(index + 1) }
+                .addOnFailureListener { error ->
+                    Log.e("FleetDebug", "Failed to clear completed jobs", error)
+                    onComplete(false)
+                }
+        }
+
+        commitBatch(0)
+    }
+
     fun getOrCreateFolderForJob(jobId: String, rego: String, onResult: (Long, String?) -> Unit) {
         viewModelScope.launch {
+            val companyId = _activeCompanyId.value ?: return@launch withContext(Dispatchers.Main) { onResult(0, "Driver session error.") }
             Log.d("FleetDebug", "Creating/Getting folder for Job: $jobId, Rego: $rego")
             try {
-                val foldersById = dao.getFoldersByJobId(jobId)
+                val foldersById = dao.getFoldersByJobId(companyId, jobId)
                 if (foldersById.isNotEmpty()) {
                     val folderId = foldersById[0].id
                     Log.d("FleetDebug", "Found existing folder by ID: $folderId")
@@ -432,16 +632,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
-                val foldersByName = dao.getFoldersByName(rego)
+                val foldersByName = dao.getFoldersByName(companyId, rego)
                 if (foldersByName.isNotEmpty()) {
                     val folderId = foldersByName[0].id
                     Log.d("FleetDebug", "Found existing folder by Rego: $folderId. Linking to Job.")
-                    dao.linkFolderToJob(folderId, jobId)
+                    dao.linkFolderToJob(companyId, folderId, jobId)
                     withContext(Dispatchers.Main) { onResult(folderId, null) }
                     return@launch
                 }
 
-                val newFolder = Folder(name = rego, jobId = jobId)
+                val newFolder = Folder(companyId = companyId, name = rego, jobId = jobId)
                 val folderId = dao.insertFolder(newFolder)
                 
                 if (folderId > 0) {
@@ -460,13 +660,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun submitSignoff(jobId: String, isDriver: Boolean, name: String, bitmap: android.graphics.Bitmap, onComplete: (Boolean) -> Unit) {
         viewModelScope.launch {
+            val companyId = _activeCompanyId.value ?: return@launch withContext(Dispatchers.Main) { onComplete(false) }
             val nextStatus = if (isDriver) JobStatus.PICKED_UP else JobStatus.DONE
             Log.d("FleetDebug", "Starting signoff (Local) for $jobId. isDriver=$isDriver -> Next Status: $nextStatus")
             
             try {
                 // 1. Save locally
                 val filename = if (isDriver) "driver_sig.png" else "customer_sig.png"
-                val file = File(getApplication<Application>().filesDir, "jobs/$jobId/$filename")
+                val file = File(getApplication<Application>().filesDir, "jobs/$companyId/$jobId/$filename")
                 file.parentFile?.mkdirs()
                 
                 file.outputStream().use { out ->
@@ -481,13 +682,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     mapOf("customerName" to name, "status" to nextStatus.name)
                 }
 
-                firestore.collection("jobs").document(jobId)
+                paths.jobs(companyId).document(jobId)
                     .update(update)
                     .addOnSuccessListener {
                         Log.d("FleetDebug", "Firestore signoff name/status update success: $nextStatus")
                         viewModelScope.launch {
                             try {
-                                dao.updateJobStatus(jobId, nextStatus)
+                                dao.updateJobStatus(companyId, jobId, nextStatus)
                             } catch (e: Exception) {}
                             withContext(Dispatchers.Main) { onComplete(true) }
                         }
@@ -505,13 +706,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateFolderChecklist(folderId: Long, checklistJson: String?) {
         viewModelScope.launch {
+            val companyId = _activeCompanyId.value ?: return@launch
             Log.d("FleetDebug", "Updating folder checklist for folder: $folderId")
-            dao.updateFolderChecklist(folderId, checklistJson)
+            dao.updateFolderChecklist(companyId, folderId, checklistJson)
             
-            val folder = dao.getFolderByIdOnce(folderId)
+            val folder = dao.getFolderByIdOnce(companyId, folderId)
             folder?.jobId?.let { jobId ->
                 if (jobId.isNotEmpty() && checklistJson != null) {
-                    val job = dao.getJobById(jobId)
+                    val job = dao.getJobById(companyId, jobId)
                     if (job != null) {
                         Log.d("FleetDebug", "Updating job $jobId checklist. Current job status: ${job.status}")
                         val checklistList = try {
@@ -537,7 +739,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val isPickup = job.status == JobStatus.ACCEPTED || job.status == JobStatus.NEW
                         val fieldName = if (isPickup) "pickupChecklist" else "dropoffChecklist"
                         
-                        firestore.collection("jobs").document(jobId)
+                        paths.jobs(companyId).document(jobId)
                             .update(
                                 mapOf(
                                     fieldName to checklistList,
@@ -548,9 +750,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 Log.d("FleetDebug", "Firestore checklist update success for field $fieldName")
                                 viewModelScope.launch {
                                     if (isPickup) {
-                                        dao.updateJobPickupChecklist(jobId, checklistJson)
+                                        dao.updateJobPickupChecklist(companyId, jobId, checklistJson)
                                     } else {
-                                        dao.updateJobDeliveryChecklist(jobId, checklistJson)
+                                        dao.updateJobDeliveryChecklist(companyId, jobId, checklistJson)
                                     }
                                 }
                             }
@@ -562,49 +764,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createFolder(name: String, onFolderCreated: (Long) -> Unit) {
         viewModelScope.launch {
-            val folderId = dao.insertFolder(Folder(name = name))
+            val companyId = _activeCompanyId.value ?: return@launch
+            val folderId = dao.insertFolder(Folder(companyId = companyId, name = name))
             withContext(Dispatchers.Main) { onFolderCreated(folderId) }
         }
     }
 
     fun getFolderById(folderId: Long): Flow<Folder?> {
-        return dao.getFolderById(folderId)
+        val companyId = _activeCompanyId.value ?: return kotlinx.coroutines.flow.flowOf(null)
+        return dao.getFolderById(companyId, folderId)
     }
 
     suspend fun getFoldersByName(name: String): List<Folder> {
-        return dao.getFoldersByName(name)
+        val companyId = _activeCompanyId.value ?: return emptyList()
+        return dao.getFoldersByName(companyId, name)
     }
 
     fun getMediaForFolder(folderId: Long): Flow<List<MediaAsset>> {
-        return dao.getMediaForFolder(folderId)
+        val companyId = _activeCompanyId.value ?: return kotlinx.coroutines.flow.flowOf(emptyList())
+        return dao.getMediaForFolder(companyId, folderId)
     }
 
     fun addMediaAsset(folderId: Long, filePath: String, isVideo: Boolean) {
         viewModelScope.launch {
+            val companyId = _activeCompanyId.value ?: return@launch
+            if (dao.getFolderByIdOnce(companyId, folderId) == null) return@launch
             dao.insertMediaAsset(MediaAsset(folderId = folderId, filePath = filePath, isVideo = isVideo))
         }
     }
 
     fun deleteMediaAsset(mediaId: Long) {
         viewModelScope.launch {
-            dao.deleteMediaAsset(mediaId)
+            _activeCompanyId.value?.let { dao.deleteMediaAsset(it, mediaId) }
         }
     }
 
     fun updateMediaNotes(mediaId: Long, notes: String?) {
         viewModelScope.launch {
-            dao.updateMediaNotes(mediaId, notes)
+            _activeCompanyId.value?.let { dao.updateMediaNotes(it, mediaId, notes) }
         }
     }
 
     fun updateLastMediaNote(folderId: Long, notes: String?) {
         viewModelScope.launch {
-            dao.updateLastMediaNoteForFolder(folderId, notes)
+            _activeCompanyId.value?.let { dao.updateLastMediaNoteForFolder(it, folderId, notes) }
         }
     }
 
     fun getMediaById(mediaId: Long): Flow<MediaAsset?> {
-        return dao.getMediaById(mediaId)
+        val companyId = _activeCompanyId.value ?: return kotlinx.coroutines.flow.flowOf(null)
+        return dao.getMediaById(companyId, mediaId)
     }
 
     fun setTimestampEnabled(enabled: Boolean) {
@@ -651,18 +860,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteFolder(folderId: Long) {
         viewModelScope.launch {
+            val companyId = _activeCompanyId.value ?: return@launch
             val outputDirectory = File(getApplication<Application>().filesDir, "folders/$folderId")
             if (outputDirectory.exists()) {
                 outputDirectory.deleteRecursively()
             }
-            dao.deleteFolder(folderId)
+            dao.deleteFolder(companyId, folderId)
         }
     }
 
     fun exportVehicleZip(folderId: Long, onResult: (File?) -> Unit) {
         viewModelScope.launch {
-            val folder = dao.getFolderByIdOnce(folderId)
-            val assets = dao.getMediaForFolderOnce(folderId)
+            val companyId = _activeCompanyId.value ?: return@launch withContext(Dispatchers.Main) { onResult(null) }
+            val folder = dao.getFolderByIdOnce(companyId, folderId)
+            val assets = dao.getMediaForFolderOnce(companyId, folderId)
             if (folder != null) {
                 val exportManager = ExportManager(getApplication())
                 val zipFile = exportManager.exportVehicle(folder, assets)
@@ -675,8 +886,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun exportFullBackup(onResult: (File?) -> Unit) {
         viewModelScope.launch {
-            val folders = dao.getAllFoldersOnce()
-            val allAssets = dao.getAllMediaAssetsOnce()
+            val companyId = _activeCompanyId.value ?: return@launch withContext(Dispatchers.Main) { onResult(null) }
+            val folders = dao.getAllFoldersOnce(companyId)
+            val allAssets = dao.getAllMediaAssetsOnce(companyId)
             val exportManager = ExportManager(getApplication())
             val zipFile = exportManager.exportFullBackup(folders, allAssets)
             withContext(Dispatchers.Main) { onResult(zipFile) }
@@ -685,6 +897,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun importFullBackup(zipFile: File, onComplete: (Boolean) -> Unit) {
         viewModelScope.launch {
+            val companyId = _activeCompanyId.value ?: return@launch onComplete(false)
             val exportManager = ExportManager(getApplication())
             exportManager.unzipAndImport(
                 zipFile,
@@ -692,11 +905,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     viewModelScope.launch {
                         try {
                             metadata.folders.forEach { folder ->
-                                val existing = dao.getFoldersByName(folder.name)
+                                val existing = dao.getFoldersByName(companyId, folder.name)
                                 val folderToInsert = if (existing.any { it.createdAt == folder.createdAt }) {
                                     null 
                                 } else {
-                                    folder.copy(id = 0)
+                                    folder.copy(id = 0, companyId = companyId)
                                 }
 
                                 if (folderToInsert != null) {
