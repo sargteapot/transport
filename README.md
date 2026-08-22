@@ -8,6 +8,10 @@ The FordWalls driver app for receiving transport jobs, completing daily pre-star
 
 Android may ask for permission to install an app from your browser or file manager. Allow it when prompted, then open the downloaded APK.
 
+## Dispatch portal
+
+[![Open FW Dispatch Portal](https://img.shields.io/badge/OPEN_FW_DISPATCH_PORTAL-portal.fordwalls.co.nz-1565C0?style=for-the-badge&logo=googlechrome&logoColor=white)](https://portal.fordwalls.co.nz)
+
 ## Current release
 
 **FW Driver v1.4.0**
