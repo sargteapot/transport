@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
@@ -13,12 +14,18 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
+import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.FirebaseFunctionsException
+import com.google.firebase.storage.FirebaseStorage
+import com.google.firebase.storage.StorageMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job as CoroutineJob
 import kotlinx.coroutines.delay
@@ -43,10 +50,13 @@ private data class StoredSession(
     val companyId: String?,
     val driverId: String?,
     val fleetNumber: String?,
-    val startedAt: Long?
+    val startedAt: Long?,
+    val firebaseAuthenticated: Boolean
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+    private val appUpdater = AppUpdater(application, viewModelScope)
+    val updateState: StateFlow<UpdateState> = appUpdater.state
     private val dao: TransporterDao = AppDatabase.getDatabase(application).transporterDao()
     private val settingsDataStore = SettingsDataStore(application)
     
@@ -55,6 +65,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     private val firestore: FirebaseFirestore get() = firestoreResult.getOrThrow()
     private val paths by lazy { TenantFirestorePaths(firestore) }
+    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
+    private val functions: FirebaseFunctions = FirebaseFunctions.getInstance("us-east1")
+    private val firebaseAuthenticated = MutableStateFlow(auth.currentUser != null)
+    private val authStateListener = FirebaseAuth.AuthStateListener { firebaseAuth ->
+        firebaseAuthenticated.value = firebaseAuth.currentUser != null
+    }
+    private val storageResult = runCatching { FirebaseStorage.getInstance(FirebaseApp.getInstance()) }
+    private val storage: FirebaseStorage get() = storageResult.getOrThrow()
     
     val fleetNumber: Flow<String?> = settingsDataStore.fleetNumber
     val selectedCompanyId: Flow<String?> = settingsDataStore.selectedCompanyId
@@ -123,10 +141,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingNotificationCount = 0
     private var notificationJob: CoroutineJob? = null
     private var sessionExpiryJob: CoroutineJob? = null
+    private var unauthenticatedSessionCleanupJob: CoroutineJob? = null
     private var activeSessionKey: String? = null
 
     init {
         createNotificationChannel()
+        appUpdater.check()
+        auth.addAuthStateListener(authStateListener)
         if (firestoreResult.isFailure) {
             _companiesLoading.value = false
             _companyLoadError.value = "Cannot connect to the required Firestore database 'transport'."
@@ -139,8 +160,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             viewModelScope.launch { settingsDataStore.migrateExistingSessionToFordWalls() }
             viewModelScope.launch {
-                combine(selectedCompanyId, driverDocumentId, fleetNumber, sessionStartedAt) { company, driver, fleet, startedAt ->
-                    StoredSession(company, driver, fleet, startedAt)
+                combine(selectedCompanyId, driverDocumentId, fleetNumber, sessionStartedAt, firebaseAuthenticated) { company, driver, fleet, startedAt, authenticated ->
+                    StoredSession(company, driver, fleet, startedAt, authenticated)
                 }.collect { session ->
                     val company = session.companyId
                     val driver = session.driverId
@@ -148,9 +169,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val startedAt = session.startedAt
                     _activeCompanyId.value = company
                     val complete = !company.isNullOrBlank() && !driver.isNullOrBlank() && !fleet.isNullOrBlank() && startedAt != null
-                    val valid = complete && !SessionPolicy.isExpired(startedAt!!)
+                    val valid = complete && session.firebaseAuthenticated && !SessionPolicy.isExpired(startedAt!!)
                     _isLoggedIn.value = valid
                     if (valid) {
+                        unauthenticatedSessionCleanupJob?.cancel()
                         val sessionKey = "$company::$driver::$fleet::$startedAt"
                         if (activeSessionKey != sessionKey) {
                             activeSessionKey = sessionKey
@@ -161,6 +183,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         if (complete && SessionPolicy.isExpired(startedAt!!)) {
                             settingsDataStore.clearDriverSession()
+                        } else if (complete && !session.firebaseAuthenticated) {
+                            unauthenticatedSessionCleanupJob?.cancel()
+                            unauthenticatedSessionCleanupJob = viewModelScope.launch {
+                                delay(1500)
+                                if (auth.currentUser == null) settingsDataStore.clearDriverSession()
+                            }
                         }
                         activeSessionKey = null
                         sessionExpiryJob?.cancel()
@@ -316,9 +344,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 JobStatus.NEW 
                             },
                             driverName = data["driverName"]?.toString(),
-                            driverSignatureUrl = data["driverSignatureUrl"]?.toString(),
+                            driverSignatureUrl = data["driverSignaturePath"]?.toString() ?: data["driverSignatureUrl"]?.toString(),
                             customerName = data["customerName"]?.toString(),
-                            customerSignatureUrl = data["customerSignatureUrl"]?.toString(),
+                            customerSignatureUrl = data["customerSignaturePath"]?.toString() ?: data["customerSignatureUrl"]?.toString(),
                             pickupChecklistJson = data["pickupChecklistJson"]?.toString(),
                             dropoffChecklistJson = data["dropoffChecklistJson"]?.toString(),
                             createdAt = createdAtMs,
@@ -410,7 +438,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun unifiedLogin(companyId: String, username: String, pass: String, fleet: String, onResult: (Boolean, String?) -> Unit) {
         val upperFleet = fleet.trim().uppercase()
-        val user = username.trim()
+        val user = username.trim().lowercase()
         
         Log.d("FleetDebug", "Attempting login for: $user, Fleet: $upperFleet")
         
@@ -418,39 +446,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             onResult(false, "Company selection changed. Please try again.")
             return
         }
-        paths.fleets(companyId).document(upperFleet).get()
-            .addOnSuccessListener { fleetDoc ->
-                if (fleetDoc.exists()) {
-                    paths.drivers(companyId)
-                        .whereEqualTo("username", user)
-                        .whereEqualTo("password", pass)
-                        .get()
-                        .addOnSuccessListener { driverSnapshot ->
-                            if (!driverSnapshot.isEmpty) {
-                                viewModelScope.launch {
-                                    val driverDocId = driverSnapshot.documents[0].id
-                                    if (_activeCompanyId.value != companyId) {
-                                        withContext(Dispatchers.Main) { onResult(false, "Company selection changed. Please try again.") }
-                                        return@launch
-                                    }
-                                    paths.drivers(companyId).document(driverDocId)
-                                        .update("currentFleetNumber", upperFleet)
-                                    settingsDataStore.commitDriverSession(driverDocId, upperFleet)
-                                    withContext(Dispatchers.Main) { onResult(true, null) }
-                                }
-                            } else {
-                                onResult(false, "Invalid username or password.")
-                            }
-                        }
-                        .addOnFailureListener { e ->
-                            onResult(false, "Auth check failed: ${e.localizedMessage}")
-                        }
-                } else {
-                    onResult(false, "Invalid username or password.")
+        functions.getHttpsCallable("driverLogin")
+            .call(mapOf("companyId" to companyId, "username" to user, "password" to pass, "fleetNumber" to upperFleet))
+            .addOnSuccessListener { callableResult ->
+                @Suppress("UNCHECKED_CAST")
+                val result = callableResult.data as? Map<String, Any?>
+                val customToken = result?.get("token")?.toString().orEmpty()
+                val driverDocId = result?.get("driverId")?.toString().orEmpty()
+                val returnedCompany = result?.get("companyId")?.toString().orEmpty()
+                val returnedFleet = result?.get("fleetNumber")?.toString().orEmpty()
+                if (customToken.isBlank() || driverDocId.isBlank() || returnedCompany != companyId || returnedFleet != upperFleet) {
+                    onResult(false, "The secure login response was incomplete. Please retry.")
+                    return@addOnSuccessListener
                 }
+                auth.signInWithCustomToken(customToken)
+                    .addOnSuccessListener {
+                        viewModelScope.launch {
+                            if (_activeCompanyId.value != companyId) {
+                                auth.signOut()
+                                withContext(Dispatchers.Main) { onResult(false, "Company selection changed. Please try again.") }
+                                return@launch
+                            }
+                            settingsDataStore.commitDriverSession(driverDocId, upperFleet)
+                            withContext(Dispatchers.Main) { onResult(true, null) }
+                        }
+                    }
+                    .addOnFailureListener { error ->
+                        onResult(false, "Secure sign-in failed: ${error.localizedMessage ?: "Please retry."}")
+                    }
             }
-            .addOnFailureListener { e ->
-                onResult(false, "Connection error: ${e.localizedMessage}")
+            .addOnFailureListener { error ->
+                val functionsError = error as? FirebaseFunctionsException
+                val message = when (functionsError?.code) {
+                    FirebaseFunctionsException.Code.UNAUTHENTICATED -> "The company, username, password, or fleet is incorrect."
+                    FirebaseFunctionsException.Code.RESOURCE_EXHAUSTED -> "Too many attempts. Wait 15 minutes and retry."
+                    FirebaseFunctionsException.Code.FAILED_PRECONDITION -> functionsError.message
+                        ?: "This driver login must be secured by the Site Owner first."
+                    FirebaseFunctionsException.Code.NOT_FOUND -> "The secure login service has not been deployed yet."
+                    FirebaseFunctionsException.Code.UNAVAILABLE,
+                    FirebaseFunctionsException.Code.DEADLINE_EXCEEDED -> "The secure login service could not be reached. Retry when signal returns."
+                    else -> functionsError?.message ?: error.localizedMessage ?: "Secure login failed."
+                }
+                onResult(false, message)
             }
     }
 
@@ -458,8 +495,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activeSessionKey = null
         sessionExpiryJob?.cancel()
         sessionExpiryJob = null
+        unauthenticatedSessionCleanupJob?.cancel()
         stopJobsListener()
         _jobs.value = emptyList()
+        auth.signOut()
         viewModelScope.launch {
             settingsDataStore.clearDriverSession()
         }
@@ -469,9 +508,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         activeSessionKey = null
         sessionExpiryJob?.cancel()
         sessionExpiryJob = null
+        unauthenticatedSessionCleanupJob?.cancel()
         stopJobsListener()
         _jobs.value = emptyList()
+        auth.signOut()
         viewModelScope.launch { settingsDataStore.clearCompanyAndDriverSession() }
+    }
+
+    override fun onCleared() {
+        unauthenticatedSessionCleanupJob?.cancel()
+        auth.removeAuthStateListener(authStateListener)
+        super.onCleared()
     }
 
     fun setNotificationsEnabled(enabled: Boolean) {
@@ -479,6 +526,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             settingsDataStore.setNotificationsEnabled(enabled)
         }
     }
+
+    fun checkForUpdates() = appUpdater.check()
+
+    fun downloadUpdate(manifest: UpdateManifest) = appUpdater.download(manifest)
+
+    fun installUpdate(manifest: UpdateManifest, apk: File): String? = appUpdater.openInstaller(manifest, apk)
 
     fun savePrestart(fleet: String, items: List<PrestartItem>, notes: String, onComplete: (Boolean) -> Unit) {
         viewModelScope.launch {
@@ -658,47 +711,143 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun safeStorageSegment(value: String): String =
+        value.trim().replace(Regex("[^A-Za-z0-9._-]"), "_").take(80).ifBlank { "unknown" }
+
+    private fun evidencePhase(job: Job): String =
+        if (job.status == JobStatus.NEW || job.status == JobStatus.ACCEPTED || job.status == JobStatus.ONSCAN) "pickup" else "delivery"
+
+    private fun mediaContentType(file: File, isVideo: Boolean): String = when (file.extension.lowercase()) {
+        "png" -> "image/png"
+        "webp" -> "image/webp"
+        "heic", "heif" -> "image/heic"
+        "mp4" -> "video/mp4"
+        "mov" -> "video/quicktime"
+        else -> if (isVideo) "video/mp4" else "image/jpeg"
+    }
+
+    private fun mainResult(callback: (Boolean, String?) -> Unit, success: Boolean, message: String?) {
+        viewModelScope.launch { withContext(Dispatchers.Main) { callback(success, message) } }
+    }
+
+    private fun evidenceErrorText(error: Throwable): String =
+        (error.localizedMessage ?: error.message ?: "Unknown upload error").take(300)
+
+    private fun recordEvidenceFailure(companyId: String, jobId: String, evidenceId: String, error: Throwable) {
+        paths.evidence(companyId, jobId).document(evidenceId).set(
+            mapOf(
+                "status" to "failed",
+                "error" to evidenceErrorText(error),
+                "updatedAt" to FieldValue.serverTimestamp()
+            ),
+            SetOptions.merge()
+        )
+    }
+
     fun submitSignoff(jobId: String, isDriver: Boolean, name: String, bitmap: android.graphics.Bitmap, onComplete: (Boolean) -> Unit) {
         viewModelScope.launch {
             val companyId = _activeCompanyId.value ?: return@launch withContext(Dispatchers.Main) { onComplete(false) }
+            if (jobId.isBlank()) return@launch withContext(Dispatchers.Main) { onComplete(false) }
             val nextStatus = if (isDriver) JobStatus.PICKED_UP else JobStatus.DONE
-            Log.d("FleetDebug", "Starting signoff (Local) for $jobId. isDriver=$isDriver -> Next Status: $nextStatus")
-            
+            Log.d("FleetDebug", "Starting cloud signoff for $companyId/$jobId. isDriver=$isDriver -> Next Status: $nextStatus")
+
             try {
-                // 1. Save locally
                 val filename = if (isDriver) "driver_sig.png" else "customer_sig.png"
                 val file = File(getApplication<Application>().filesDir, "jobs/$companyId/$jobId/$filename")
                 file.parentFile?.mkdirs()
-                
-                file.outputStream().use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
-                }
-                Log.d("FleetDebug", "Signature saved locally to: ${file.absolutePath}")
+                file.outputStream().use { out -> bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out) }
+                if (storageResult.isFailure) throw storageResult.exceptionOrNull() ?: IllegalStateException("Firebase Storage is unavailable")
 
-                // 2. Update Firestore
-                val update = if (isDriver) {
-                    mapOf("driverName" to name, "status" to nextStatus.name)
-                } else {
-                    mapOf("customerName" to name, "status" to nextStatus.name)
-                }
+                val role = if (isDriver) "driver" else "customer"
+                val phase = if (isDriver) "pickup" else "delivery"
+                val evidenceId = "$role-signature"
+                val evidenceDoc = paths.evidence(companyId, jobId).document(evidenceId)
+                val driverId = settingsDataStore.driverDocumentId.firstOrNull().orEmpty()
+                val fleet = settingsDataStore.fleetNumber.firstOrNull().orEmpty()
+                val driverUid = auth.currentUser?.uid.orEmpty()
+                if (driverId.isBlank() || driverUid.isBlank()) throw IllegalStateException("The secure driver session has expired")
+                val storagePath = "companies/${safeStorageSegment(companyId)}/drivers/${safeStorageSegment(driverUid)}/jobs/${safeStorageSegment(jobId)}/evidence/signatures/$evidenceId.png"
+                val pending = mapOf(
+                    "type" to "signature",
+                    "phase" to phase,
+                    "signerRole" to role,
+                    "signerName" to name.trim(),
+                    "companyId" to companyId,
+                    "jobId" to jobId,
+                    "driverId" to driverId,
+                    "driverUid" to driverUid,
+                    "fleetNumber" to fleet,
+                    "status" to "uploading",
+                    "storagePath" to storagePath,
+                    "contentType" to "image/png",
+                    "capturedAt" to System.currentTimeMillis(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
 
-                paths.jobs(companyId).document(jobId)
-                    .update(update)
+                evidenceDoc.set(pending, SetOptions.merge())
                     .addOnSuccessListener {
-                        Log.d("FleetDebug", "Firestore signoff name/status update success: $nextStatus")
-                        viewModelScope.launch {
-                            try {
-                                dao.updateJobStatus(companyId, jobId, nextStatus)
-                            } catch (e: Exception) {}
-                            withContext(Dispatchers.Main) { onComplete(true) }
-                        }
+                        val storageRef = storage.reference.child(storagePath)
+                        val metadata = StorageMetadata.Builder()
+                            .setContentType("image/png")
+                            .setCustomMetadata("companyId", companyId)
+                            .setCustomMetadata("jobId", jobId)
+                            .setCustomMetadata("evidenceId", evidenceId)
+                            .setCustomMetadata("driverId", driverId)
+                            .setCustomMetadata("driverUid", driverUid)
+                            .build()
+                        storageRef.putFile(Uri.fromFile(file), metadata)
+                            .addOnSuccessListener {
+                                val jobUpdate: Map<String, Any> = if (isDriver) {
+                                    mapOf(
+                                        "driverName" to name.trim(),
+                                        "driverSignaturePath" to storagePath,
+                                        "status" to nextStatus.name,
+                                        "evidenceUpdatedAt" to FieldValue.serverTimestamp()
+                                    )
+                                } else {
+                                    mapOf(
+                                        "customerName" to name.trim(),
+                                        "customerSignaturePath" to storagePath,
+                                        "status" to nextStatus.name,
+                                        "evidenceUpdatedAt" to FieldValue.serverTimestamp()
+                                    )
+                                }
+                                firestore.runBatch { batch ->
+                                    batch.update(paths.jobs(companyId).document(jobId), jobUpdate)
+                                    batch.set(
+                                        evidenceDoc,
+                                        mapOf(
+                                            "status" to "ready",
+                                            "error" to "",
+                                            "uploadedAt" to FieldValue.serverTimestamp(),
+                                            "updatedAt" to FieldValue.serverTimestamp()
+                                        ),
+                                        SetOptions.merge()
+                                    )
+                                }.addOnSuccessListener {
+                                    viewModelScope.launch {
+                                        if (isDriver) dao.markJobAsPickedUp(companyId, jobId, name.trim(), storagePath)
+                                        else dao.markJobAsDone(companyId, jobId, name.trim(), storagePath)
+                                        withContext(Dispatchers.Main) { onComplete(true) }
+                                    }
+                                }.addOnFailureListener { error ->
+                                    recordEvidenceFailure(companyId, jobId, evidenceId, error)
+                                    Log.e("FleetDebug", "Signature metadata update failed", error)
+                                    viewModelScope.launch { withContext(Dispatchers.Main) { onComplete(false) } }
+                                }
+                            }
+                            .addOnFailureListener { error ->
+                                recordEvidenceFailure(companyId, jobId, evidenceId, error)
+                                Log.e("FleetDebug", "Signature upload failed", error)
+                                viewModelScope.launch { withContext(Dispatchers.Main) { onComplete(false) } }
+                            }
                     }
-                    .addOnFailureListener { e ->
-                        Log.e("FleetDebug", "Firestore signoff update failed: ${e.message}", e)
+                    .addOnFailureListener { error ->
+                        Log.e("FleetDebug", "Could not create signature evidence record", error)
                         viewModelScope.launch { withContext(Dispatchers.Main) { onComplete(false) } }
                     }
             } catch (e: Exception) {
-                Log.e("FleetDebug", "CRITICAL ERROR in local submitSignoff: ${e.message}", e)
+                Log.e("FleetDebug", "CRITICAL ERROR in submitSignoff: ${e.message}", e)
                 withContext(Dispatchers.Main) { onComplete(false) }
             }
         }
@@ -785,12 +934,159 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return dao.getMediaForFolder(companyId, folderId)
     }
 
-    fun addMediaAsset(folderId: Long, filePath: String, isVideo: Boolean) {
+    fun addMediaAsset(
+        folderId: Long,
+        filePath: String,
+        isVideo: Boolean,
+        onUploadComplete: (Boolean, String?) -> Unit = { _, _ -> }
+    ) {
         viewModelScope.launch {
             val companyId = _activeCompanyId.value ?: return@launch
-            if (dao.getFolderByIdOnce(companyId, folderId) == null) return@launch
-            dao.insertMediaAsset(MediaAsset(folderId = folderId, filePath = filePath, isVideo = isVideo))
+            val folder = dao.getFolderByIdOnce(companyId, folderId) ?: return@launch
+            val jobId = folder.jobId
+            val job = jobId?.takeIf { it.isNotBlank() }?.let { dao.getJobById(companyId, it) }
+            val phase = job?.let(::evidencePhase)
+            val assetId = dao.insertMediaAsset(
+                MediaAsset(
+                    folderId = folderId,
+                    filePath = filePath,
+                    isVideo = isVideo,
+                    jobId = jobId,
+                    evidencePhase = phase,
+                    cloudState = if (job == null) "LOCAL_ONLY" else "PENDING"
+                )
+            )
+            val asset = dao.getMediaByIdOnce(companyId, assetId)
+            if (asset == null || job == null) {
+                mainResult(onUploadComplete, true, "Saved on this phone. This media is not linked to a dispatched job.")
+                return@launch
+            }
+            uploadMediaAsset(companyId, asset, job, onUploadComplete)
         }
+    }
+
+    fun retryMediaUpload(mediaId: Long, onUploadComplete: (Boolean, String?) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            val companyId = _activeCompanyId.value
+                ?: return@launch mainResult(onUploadComplete, false, "Driver session is unavailable.")
+            val asset = dao.getMediaByIdOnce(companyId, mediaId)
+                ?: return@launch mainResult(onUploadComplete, false, "The local photo could not be found.")
+            val jobId = asset.jobId
+                ?: dao.getFolderByIdOnce(companyId, asset.folderId)?.jobId
+                ?: return@launch mainResult(onUploadComplete, false, "This photo is not linked to a dispatched job.")
+            val job = dao.getJobById(companyId, jobId)
+                ?: return@launch mainResult(onUploadComplete, false, "The linked job is no longer available on this phone.")
+            uploadMediaAsset(companyId, asset.copy(jobId = jobId), job, onUploadComplete)
+        }
+    }
+
+    private suspend fun uploadMediaAsset(
+        companyId: String,
+        asset: MediaAsset,
+        job: Job,
+        onUploadComplete: (Boolean, String?) -> Unit
+    ) {
+        val file = File(asset.filePath)
+        if (!file.exists()) {
+            dao.updateMediaCloudState(companyId, asset.id, asset.evidenceId, asset.evidencePhase, "FAILED", asset.storagePath, null, "Local file is missing")
+            mainResult(onUploadComplete, false, "The local photo file is missing.")
+            return
+        }
+        if (storageResult.isFailure) {
+            val error = storageResult.exceptionOrNull() ?: IllegalStateException("Firebase Storage is unavailable")
+            dao.updateMediaCloudState(companyId, asset.id, asset.evidenceId, asset.evidencePhase, "FAILED", asset.storagePath, null, evidenceErrorText(error))
+            mainResult(onUploadComplete, false, "Saved on this phone, but Firebase Storage is unavailable.")
+            return
+        }
+
+        val driverId = settingsDataStore.driverDocumentId.firstOrNull().orEmpty()
+        val driverUid = auth.currentUser?.uid.orEmpty()
+        if (driverId.isBlank() || driverUid.isBlank()) {
+            val error = IllegalStateException("The secure driver session has expired")
+            dao.updateMediaCloudState(companyId, asset.id, asset.evidenceId, asset.evidencePhase, "FAILED", asset.storagePath, null, evidenceErrorText(error))
+            mainResult(onUploadComplete, false, "Your secure driver session has expired. Sign in again, then tap Retry.")
+            return
+        }
+        val fleet = settingsDataStore.fleetNumber.firstOrNull().orEmpty()
+        val phase = asset.evidencePhase ?: evidencePhase(job)
+        val evidenceId = asset.evidenceId ?: "media-${safeStorageSegment(driverId.ifBlank { fleet })}-${asset.id}"
+        val extension = file.extension.lowercase().ifBlank { if (asset.isVideo) "mp4" else "jpg" }
+        val securePrefix = "companies/${safeStorageSegment(companyId)}/drivers/${safeStorageSegment(driverUid)}/jobs/${safeStorageSegment(job.id)}/evidence/"
+        val storagePath = asset.storagePath?.takeIf { it.startsWith(securePrefix) }
+            ?: "$securePrefix$phase/$evidenceId.${safeStorageSegment(extension)}"
+        val contentType = mediaContentType(file, asset.isVideo)
+        val evidenceDoc = paths.evidence(companyId, job.id).document(evidenceId)
+        val pending = mapOf(
+            "type" to if (asset.isVideo) "video" else "photo",
+            "phase" to phase,
+            "companyId" to companyId,
+            "jobId" to job.id,
+            "driverId" to driverId,
+            "driverUid" to driverUid,
+            "fleetNumber" to fleet,
+            "status" to "uploading",
+            "storagePath" to storagePath,
+            "contentType" to contentType,
+            "originalName" to file.name,
+            "notes" to (asset.notes ?: ""),
+            "capturedAt" to asset.timestamp,
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+
+        dao.updateMediaCloudState(companyId, asset.id, evidenceId, phase, "UPLOADING", storagePath, null, null)
+        evidenceDoc.set(pending, SetOptions.merge())
+            .addOnSuccessListener {
+                val storageRef = storage.reference.child(storagePath)
+                val metadata = StorageMetadata.Builder()
+                    .setContentType(contentType)
+                    .setCustomMetadata("companyId", companyId)
+                    .setCustomMetadata("jobId", job.id)
+                    .setCustomMetadata("evidenceId", evidenceId)
+                    .setCustomMetadata("phase", phase)
+                    .setCustomMetadata("driverId", driverId)
+                    .setCustomMetadata("driverUid", driverUid)
+                    .build()
+                storageRef.putFile(Uri.fromFile(file), metadata)
+                    .addOnSuccessListener {
+                        firestore.runBatch { batch ->
+                            batch.set(
+                                evidenceDoc,
+                                mapOf(
+                                    "status" to "ready",
+                                    "error" to "",
+                                    "uploadedAt" to FieldValue.serverTimestamp(),
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                ),
+                                SetOptions.merge()
+                            )
+                            batch.update(paths.jobs(companyId).document(job.id), mapOf("evidenceUpdatedAt" to FieldValue.serverTimestamp()))
+                        }.addOnSuccessListener {
+                            viewModelScope.launch {
+                                dao.updateMediaCloudState(companyId, asset.id, evidenceId, phase, "READY", storagePath, null, null)
+                                mainResult(onUploadComplete, true, if (asset.isVideo) "Video uploaded to FW Dispatch." else "Photo uploaded to FW Dispatch.")
+                            }
+                        }.addOnFailureListener { error ->
+                            recordEvidenceFailure(companyId, job.id, evidenceId, error)
+                            viewModelScope.launch {
+                                dao.updateMediaCloudState(companyId, asset.id, evidenceId, phase, "FAILED", storagePath, null, evidenceErrorText(error))
+                                mainResult(onUploadComplete, false, "Saved on this phone, but FW Dispatch could not record the upload. Tap Retry in the gallery.")
+                            }
+                        }
+                    }
+                    .addOnFailureListener { error ->
+                        recordEvidenceFailure(companyId, job.id, evidenceId, error)
+                        viewModelScope.launch {
+                            dao.updateMediaCloudState(companyId, asset.id, evidenceId, phase, "FAILED", storagePath, null, evidenceErrorText(error))
+                            mainResult(onUploadComplete, false, "Saved on this phone, but upload failed. Tap Retry in the gallery when signal returns.")
+                        }
+                    }
+            }
+            .addOnFailureListener { error ->
+                viewModelScope.launch {
+                    dao.updateMediaCloudState(companyId, asset.id, evidenceId, phase, "FAILED", storagePath, null, evidenceErrorText(error))
+                    mainResult(onUploadComplete, false, "Saved on this phone, but the upload record could not be created. Tap Retry in the gallery.")
+                }
+            }
     }
 
     fun deleteMediaAsset(mediaId: Long) {
@@ -801,14 +1097,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateMediaNotes(mediaId: Long, notes: String?) {
         viewModelScope.launch {
-            _activeCompanyId.value?.let { dao.updateMediaNotes(it, mediaId, notes) }
+            val companyId = _activeCompanyId.value ?: return@launch
+            dao.updateMediaNotes(companyId, mediaId, notes)
+            dao.getMediaByIdOnce(companyId, mediaId)?.let { syncEvidenceNotes(companyId, it, notes) }
         }
     }
 
     fun updateLastMediaNote(folderId: Long, notes: String?) {
         viewModelScope.launch {
-            _activeCompanyId.value?.let { dao.updateLastMediaNoteForFolder(it, folderId, notes) }
+            val companyId = _activeCompanyId.value ?: return@launch
+            dao.updateLastMediaNoteForFolder(companyId, folderId, notes)
+            dao.getLatestMediaForFolderOnce(companyId, folderId)?.let { syncEvidenceNotes(companyId, it, notes) }
         }
+    }
+
+    private fun syncEvidenceNotes(companyId: String, asset: MediaAsset, notes: String?) {
+        val jobId = asset.jobId ?: return
+        val evidenceId = asset.evidenceId ?: return
+        paths.evidence(companyId, jobId).document(evidenceId).set(
+            mapOf("notes" to (notes ?: ""), "updatedAt" to FieldValue.serverTimestamp()),
+            SetOptions.merge()
+        )
     }
 
     fun getMediaById(mediaId: Long): Flow<MediaAsset?> {

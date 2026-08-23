@@ -80,7 +80,7 @@ fun SignOffScreen(
                         if (success) {
                             onComplete()
                         } else {
-                            errorMessage = "Error saving confirmation locally."
+                            errorMessage = "Signature is saved on this phone, but it could not be uploaded. Check your signal and tap Save again. The job has not advanced."
                         }
                     }
                 },

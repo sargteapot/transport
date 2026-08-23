@@ -29,8 +29,14 @@ interface TransporterDao {
     @Query("SELECT media_assets.* FROM media_assets INNER JOIN folders ON folders.id = media_assets.folderId WHERE media_assets.folderId = :folderId AND folders.companyId = :companyId ORDER BY timestamp ASC")
     suspend fun getMediaForFolderOnce(companyId: String, folderId: Long): List<MediaAsset>
 
+    @Query("SELECT media_assets.* FROM media_assets INNER JOIN folders ON folders.id = media_assets.folderId WHERE media_assets.folderId = :folderId AND folders.companyId = :companyId ORDER BY media_assets.id DESC LIMIT 1")
+    suspend fun getLatestMediaForFolderOnce(companyId: String, folderId: Long): MediaAsset?
+
     @Query("SELECT media_assets.* FROM media_assets INNER JOIN folders ON folders.id = media_assets.folderId WHERE media_assets.id = :mediaId AND folders.companyId = :companyId")
     fun getMediaById(companyId: String, mediaId: Long): Flow<MediaAsset?>
+
+    @Query("SELECT media_assets.* FROM media_assets INNER JOIN folders ON folders.id = media_assets.folderId WHERE media_assets.id = :mediaId AND folders.companyId = :companyId")
+    suspend fun getMediaByIdOnce(companyId: String, mediaId: Long): MediaAsset?
 
     @Query("SELECT media_assets.* FROM media_assets INNER JOIN folders ON folders.id = media_assets.folderId WHERE folders.companyId = :companyId")
     fun getAllMediaAssets(companyId: String): Flow<List<MediaAsset>>
@@ -58,6 +64,28 @@ interface TransporterDao {
 
     @Query("UPDATE media_assets SET notes = :notes WHERE folderId = :folderId AND folderId IN (SELECT id FROM folders WHERE companyId = :companyId) AND id = (SELECT MAX(id) FROM media_assets WHERE folderId = :folderId)")
     suspend fun updateLastMediaNoteForFolder(companyId: String, folderId: Long, notes: String?)
+
+    @Query("""
+        UPDATE media_assets
+        SET evidenceId = :evidenceId,
+            evidencePhase = :phase,
+            cloudState = :state,
+            storagePath = :storagePath,
+            downloadUrl = :downloadUrl,
+            cloudError = :error
+        WHERE id = :mediaId
+          AND folderId IN (SELECT id FROM folders WHERE companyId = :companyId)
+    """)
+    suspend fun updateMediaCloudState(
+        companyId: String,
+        mediaId: Long,
+        evidenceId: String?,
+        phase: String?,
+        state: String,
+        storagePath: String?,
+        downloadUrl: String?,
+        error: String?
+    )
 
     @Query("UPDATE folders SET checklistJson = :checklistJson WHERE id = :folderId AND companyId = :companyId")
     suspend fun updateFolderChecklist(companyId: String, folderId: Long, checklistJson: String?)
@@ -99,11 +127,11 @@ interface TransporterDao {
     @Query("UPDATE jobs SET dropoffChecklistJson = :checklistJson WHERE companyId = :companyId AND id = :jobId")
     suspend fun updateJobDeliveryChecklist(companyId: String, jobId: String, checklistJson: String)
 
-    @Query("UPDATE jobs SET driverName = :driverName, driverSignatureUrl = :driverSignatureUrl, status = 'PICKED_UP' WHERE id = :jobId")
-    suspend fun markJobAsPickedUp(jobId: String, driverName: String, driverSignatureUrl: String)
+    @Query("UPDATE jobs SET driverName = :driverName, driverSignatureUrl = :driverSignatureUrl, status = 'PICKED_UP' WHERE companyId = :companyId AND id = :jobId")
+    suspend fun markJobAsPickedUp(companyId: String, jobId: String, driverName: String, driverSignatureUrl: String)
 
-    @Query("UPDATE jobs SET customerName = :customerName, customerSignatureUrl = :customerSignatureUrl, status = 'DONE' WHERE id = :jobId")
-    suspend fun markJobAsDone(jobId: String, customerName: String, customerSignatureUrl: String)
+    @Query("UPDATE jobs SET customerName = :customerName, customerSignatureUrl = :customerSignatureUrl, status = 'DONE' WHERE companyId = :companyId AND id = :jobId")
+    suspend fun markJobAsDone(companyId: String, jobId: String, customerName: String, customerSignatureUrl: String)
     @Query("UPDATE folders SET jobId = :jobId WHERE id = :folderId AND companyId = :companyId")
     suspend fun linkFolderToJob(companyId: String, folderId: Long, jobId: String)
 }

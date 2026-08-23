@@ -16,6 +16,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
 import nz.co.fordwalls.transportercam.BuildConfig
+import nz.co.fordwalls.transportercam.UpdateManifest
+import nz.co.fordwalls.transportercam.UpdateState
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,6 +29,10 @@ fun SettingsScreen(
     onNotificationsToggle: (Boolean) -> Unit,
     darkMode: String,
     onDarkModeChange: (String) -> Unit,
+    updateState: UpdateState,
+    onCheckForUpdates: () -> Unit,
+    onDownloadUpdate: (UpdateManifest) -> Unit,
+    onInstallUpdate: (UpdateManifest, File) -> Unit,
     onChangeCompany: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -113,6 +120,17 @@ fun SettingsScreen(
             }
             
             Spacer(modifier = Modifier.height(24.dp))
+
+            SettingsSection(title = "App updates") {
+                UpdateSettings(
+                    state = updateState,
+                    onCheck = onCheckForUpdates,
+                    onDownload = onDownloadUpdate,
+                    onInstall = onInstallUpdate
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
             
             SettingsSection(title = "About") {
                 TextButton(
@@ -168,6 +186,86 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
             )
         }
+    }
+}
+
+@Composable
+private fun UpdateSettings(
+    state: UpdateState,
+    onCheck: () -> Unit,
+    onDownload: (UpdateManifest) -> Unit,
+    onInstall: (UpdateManifest, File) -> Unit
+) {
+    when (state) {
+        UpdateState.Idle -> {
+            Text("Updates are checked automatically when FW Driver starts.", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onCheck, modifier = Modifier.fillMaxWidth()) { Text("Check for updates") }
+        }
+        UpdateState.Checking -> UpdateProgress("Checking for updates…")
+        UpdateState.UpToDate -> {
+            ListItem(
+                headlineContent = { Text("FW Driver is up to date") },
+                supportingContent = { Text("Installed version ${BuildConfig.VERSION_NAME}") },
+                leadingContent = { Icon(Icons.Default.CheckCircle, null) }
+            )
+            OutlinedButton(onClick = onCheck, modifier = Modifier.fillMaxWidth()) { Text("Check again") }
+        }
+        is UpdateState.Available -> {
+            UpdateDetails(state.manifest, state.required)
+            Button(onClick = { onDownload(state.manifest) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Download, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Download update")
+            }
+        }
+        is UpdateState.Downloading -> UpdateProgress(
+            state.progress?.let { "Downloading update… $it%" } ?: "Downloading update…",
+            state.progress
+        )
+        is UpdateState.ReadyToInstall -> {
+            UpdateDetails(state.manifest, required = false)
+            Button(onClick = { onInstall(state.manifest, state.apk) }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.InstallMobile, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Install update")
+            }
+            Text(
+                "Android will ask you to confirm installation. Your FW Driver data will be retained.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        is UpdateState.Error -> {
+            Text(state.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            val retryManifest = state.manifest
+            OutlinedButton(
+                onClick = { if (retryManifest == null) onCheck() else onDownload(retryManifest) },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (retryManifest == null) "Try again" else "Retry download") }
+        }
+    }
+}
+
+@Composable
+private fun UpdateDetails(manifest: UpdateManifest, required: Boolean) {
+    ListItem(
+        headlineContent = { Text("FW Driver ${manifest.versionName}") },
+        supportingContent = { Text(if (required) "Required update" else "Update available") },
+        leadingContent = { Icon(Icons.Default.SystemUpdate, null) }
+    )
+    if (manifest.releaseNotes.isNotEmpty()) {
+        Text("What's new", style = MaterialTheme.typography.labelLarge)
+        manifest.releaseNotes.forEach { note -> Text("• $note", style = MaterialTheme.typography.bodySmall) }
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun UpdateProgress(label: String, progress: Int? = null) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        if (progress == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        else LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -228,6 +326,10 @@ fun SettingsScreenPreview() {
         onNotificationsToggle = {},
         darkMode = "auto",
         onDarkModeChange = {},
+        updateState = UpdateState.UpToDate,
+        onCheckForUpdates = {},
+        onDownloadUpdate = {},
+        onInstallUpdate = { _, _ -> },
         onChangeCompany = {},
         onBack = {}
     )

@@ -25,5 +25,12 @@ data class MediaAsset(
     val filePath: String,
     val isVideo: Boolean,
     val timestamp: Long = System.currentTimeMillis(),
-    val notes: String? = null
+    val notes: String? = null,
+    val jobId: String? = null,
+    val evidenceId: String? = null,
+    val evidencePhase: String? = null,
+    val cloudState: String = "LOCAL_ONLY",
+    val storagePath: String? = null,
+    val downloadUrl: String? = null,
+    val cloudError: String? = null
 )

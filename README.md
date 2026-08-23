@@ -14,7 +14,7 @@ Android may ask for permission to install an app from your browser or file manag
 
 ## Current release
 
-**FW Driver v1.4.0**
+**FW Driver v1.4.3 updater test**
 
 - Multi-company selection and isolated company data
 - Mandatory daily vehicle pre-start
@@ -22,3 +22,52 @@ Android may ask for permission to install an app from your browser or file manag
 - Driver job dispatch, quick acceptance, pickup and delivery checks
 - Signatures, photos, and completed-job management
 - Improved dark-mode contrast and mobile button layouts
+
+### Photo and signature cloud evidence
+
+- Job-linked photos and videos are saved on the phone first, then uploaded to
+  Firebase Storage under the authenticated driver, selected company and job.
+- Driver login is verified by the `driverLogin` callable function and exchanged
+  for a Firebase Authentication custom token. The app no longer queries
+  Firestore for a readable username/password pair.
+- Every upload has a Firestore evidence record showing uploading, ready or
+  failed state. Failed media stays on the phone and can be retried from the
+  vehicle gallery.
+- Driver and customer signatures upload before the job advances. A failed
+  signature upload leaves the job at its previous status and shows the driver a
+  retry message.
+- Storage download tokens are not copied into Firestore. Only the protected
+  Storage path is recorded, and FW Dispatch resolves it for an authorised user.
+- FW Dispatch Build 17 reads the same job evidence records and displays the
+  original photos, videos and signatures.
+
+### In-app updates
+
+FW Driver checks an HTTPS JSON manifest when the app starts and from Settings.
+The manifest location defaults to:
+
+`https://transportercam-2ec51107.web.app/downloads/fw-driver-update.json`
+
+Override it for a build with the Gradle property `FW_UPDATE_MANIFEST_URL`. For
+example, add this to a user-level `gradle.properties` file (do not commit local
+test URLs):
+
+`FW_UPDATE_MANIFEST_URL=https://example.web.app/downloads/fw-driver-update.json`
+
+The manifest format is:
+
+```json
+{
+  "versionCode": 7,
+  "versionName": "1.4.3",
+  "minimumVersionCode": 6,
+  "apkUrl": "https://example.web.app/downloads/fw-driver-1.4.3.apk",
+  "sha256": "64-character lowercase SHA-256 value",
+  "releaseNotes": ["First change", "Second change"]
+}
+```
+
+The downloaded APK must use the same application ID and signing certificate as
+the installed app. Its version and SHA-256 value must match the manifest before
+FW Driver opens Android's installer. Android always retains control of the
+install confirmation.

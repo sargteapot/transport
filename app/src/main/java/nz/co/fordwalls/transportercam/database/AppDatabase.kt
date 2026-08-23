@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [Folder::class, MediaAsset::class, Job::class], version = 13, exportSchema = false)
+@Database(entities = [Folder::class, MediaAsset::class, Job::class], version = 14, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun transporterDao(): TransporterDao
 
@@ -86,6 +86,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE media_assets ADD COLUMN jobId TEXT")
+                db.execSQL("ALTER TABLE media_assets ADD COLUMN evidenceId TEXT")
+                db.execSQL("ALTER TABLE media_assets ADD COLUMN evidencePhase TEXT")
+                db.execSQL("ALTER TABLE media_assets ADD COLUMN cloudState TEXT NOT NULL DEFAULT 'LOCAL_ONLY'")
+                db.execSQL("ALTER TABLE media_assets ADD COLUMN storagePath TEXT")
+                db.execSQL("ALTER TABLE media_assets ADD COLUMN downloadUrl TEXT")
+                db.execSQL("ALTER TABLE media_assets ADD COLUMN cloudError TEXT")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -97,7 +109,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, 
                     MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, 
                     MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-                    MIGRATION_11_12, MIGRATION_12_13
+                    MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14
                 )
                 .build()
                 INSTANCE = instance

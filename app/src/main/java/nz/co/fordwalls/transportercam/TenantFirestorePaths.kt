@@ -11,6 +11,8 @@ class TenantFirestorePaths(private val db: FirebaseFirestore) {
     fun jobs(companyId: String) = collection(companyId, "jobs")
     fun fleets(companyId: String) = collection(companyId, "fleets")
     fun drivers(companyId: String) = collection(companyId, "drivers")
+    fun evidence(companyId: String, jobId: String) =
+        jobs(companyId).document(jobId).collection("evidence")
     fun prestarts(companyId: String, fleet: String) =
         fleets(companyId).document(fleet).collection("prestarts")
 

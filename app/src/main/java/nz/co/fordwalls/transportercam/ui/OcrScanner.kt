@@ -24,6 +24,7 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 
 @Composable
+@androidx.annotation.OptIn(ExperimentalGetImage::class)
 fun OcrScanner(
     onTextScanned: (String) -> Unit,
     onCancel: () -> Unit

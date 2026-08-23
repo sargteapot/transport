@@ -174,6 +174,7 @@ fun AppNavigation(
     val notificationsEnabled by viewModel.notificationsEnabled.collectAsState(initial = true)
     val darkMode by viewModel.darkMode.collectAsState(initial = "auto")
     val shareSummaryEnabled by viewModel.shareSummaryEnabled.collectAsState(initial = true)
+    val updateState by viewModel.updateState.collectAsState()
 
     androidx.activity.compose.BackHandler(enabled = navigationStack.size > 1) {
         navigationStack = navigationStack.dropLast(1)
@@ -324,6 +325,12 @@ fun AppNavigation(
                 onNotificationsToggle = { viewModel.setNotificationsEnabled(it) },
                 darkMode = darkMode,
                 onDarkModeChange = { viewModel.setDarkMode(it) },
+                updateState = updateState,
+                onCheckForUpdates = { viewModel.checkForUpdates() },
+                onDownloadUpdate = { viewModel.downloadUpdate(it) },
+                onInstallUpdate = { manifest, apk ->
+                    viewModel.installUpdate(manifest, apk)?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+                },
                 onChangeCompany = { viewModel.changeCompany() },
                 onBack = { navigationStack = navigationStack.dropLast(1) }
             )
@@ -337,7 +344,11 @@ fun AppNavigation(
                 imageQuality = 95,
                 captureFeedbackEnabled = true,
                 onMediaCaptured = { filePath, isVideo ->
-                    viewModel.addMediaAsset(screen.folderId, filePath, isVideo)
+                    viewModel.addMediaAsset(screen.folderId, filePath, isVideo) { success, message ->
+                        if (!message.isNullOrBlank()) {
+                            Toast.makeText(context, message, if (success) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+                        }
+                    }
                 },
                 onUpdateLastNote = { note ->
                     viewModel.updateLastMediaNote(screen.folderId, note)
