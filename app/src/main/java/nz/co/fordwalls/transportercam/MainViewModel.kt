@@ -853,11 +853,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateFolderChecklist(folderId: Long, checklistJson: String?) {
+    fun updateFolderChecklist(folderId: Long, checklistJson: String?, onLocalSaved: () -> Unit = {}) {
         viewModelScope.launch {
             val companyId = _activeCompanyId.value ?: return@launch
             Log.d("FleetDebug", "Updating folder checklist for folder: $folderId")
             dao.updateFolderChecklist(companyId, folderId, checklistJson)
+            withContext(Dispatchers.Main) { onLocalSaved() }
             
             val folder = dao.getFolderByIdOnce(companyId, folderId)
             folder?.jobId?.let { jobId ->

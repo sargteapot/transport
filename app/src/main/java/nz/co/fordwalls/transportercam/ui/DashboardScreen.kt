@@ -69,21 +69,24 @@ fun DashboardScreen(
                         Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Logout")
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding)) {
-            TabRow(selectedTabIndex = initialTab) {
-                tabs.forEachIndexed { index, title ->
-                    Tab(
-                        selected = initialTab == index,
-                        onClick = { onTabSelected(index) },
-                        text = { Text(title) }
-                    )
+            Surface(color = MaterialTheme.colorScheme.surface) {
+                TabRow(
+                    selectedTabIndex = initialTab,
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    divider = {}
+                ) {
+                    tabs.forEachIndexed { index, title ->
+                        Tab(
+                            selected = initialTab == index,
+                            onClick = { onTabSelected(index) },
+                            text = { Text(title, fontWeight = if (initialTab == index) FontWeight.Bold else FontWeight.Medium) }
+                        )
+                    }
                 }
             }
 
@@ -184,30 +187,33 @@ fun TodayTab(onScan: () -> Unit, onWharfScan: () -> Unit, onPrestart: () -> Unit
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        val uniformColor = MaterialTheme.colorScheme.primary
-        
+        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+            Text("Driver tools", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Everything needed for today's work", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
         DashboardButton(
             text = "Scan Booked Vehicle",
+            supportingText = "Match a vehicle to an assigned job",
             icon = Icons.Default.QrCodeScanner,
-            color = uniformColor,
             onClick = onScan
         )
         DashboardButton(
             text = "Wharf Scan (Global)",
+            supportingText = "Record a vehicle arriving at the wharf",
             icon = Icons.Default.Anchor,
-            color = uniformColor,
             onClick = onWharfScan
         )
         DashboardButton(
             text = "Pre-start Checklist",
+            supportingText = "Complete the daily vehicle inspection",
             icon = Icons.AutoMirrored.Filled.Assignment,
-            color = uniformColor,
             onClick = onPrestart
         )
         DashboardButton(
             text = "Photos",
+            supportingText = "Review photos saved on this device",
             icon = Icons.Default.PhotoLibrary,
-            color = uniformColor,
             onClick = onPhotosClick
         )
         
@@ -223,26 +229,28 @@ fun TodayTab(onScan: () -> Unit, onWharfScan: () -> Unit, onPrestart: () -> Unit
 }
 
 @Composable
-fun DashboardButton(text: String, icon: ImageVector, color: Color, onClick: () -> Unit) {
-    Button(
+fun DashboardButton(text: String, supportingText: String, icon: ImageVector, onClick: () -> Unit) {
+    ElevatedCard(
         onClick = onClick,
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(80.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = color,
-            contentColor = MaterialTheme.colorScheme.onPrimary
-        ),
-        shape = MaterialTheme.shapes.large
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Start
         ) {
-            Icon(icon, null, modifier = Modifier.size(32.dp))
-            Spacer(Modifier.width(20.dp))
-            Text(text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.primaryContainer) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(14.dp).size(26.dp))
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(supportingText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -256,11 +264,13 @@ fun JobCard(job: Job, onClick: () -> Unit, onAccept: (() -> Unit)? = null) {
     ElevatedCard(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
         colors = CardDefaults.elevatedCardColors(
             containerColor = when (job.status) {
                 JobStatus.NEW -> MaterialTheme.colorScheme.surface
                 JobStatus.PICKED_UP -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
-                else -> MaterialTheme.colorScheme.surfaceVariant
+                else -> MaterialTheme.colorScheme.surface
             }
         )
     ) {
@@ -361,8 +371,7 @@ fun StatusBadge(status: JobStatus) {
     Surface(
         color = color.copy(alpha = 0.1f),
         contentColor = color,
-        shape = MaterialTheme.shapes.small,
-        border = androidx.compose.foundation.BorderStroke(1.dp, color)
+        shape = MaterialTheme.shapes.extraLarge
     ) {
         Text(
             text = status.name,

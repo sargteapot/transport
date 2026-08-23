@@ -5,7 +5,6 @@ import android.util.Log
 import android.graphics.*
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.video.*
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,15 +13,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
-import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,15 +26,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.layout.ContentScale
 import coil3.compose.AsyncImage
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.launch
-import nz.co.fordwalls.transportercam.database.Folder
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -57,21 +49,16 @@ fun CameraScreen(
     captureFeedbackEnabled: Boolean,
     onMediaCaptured: (String, Boolean) -> Unit,
     onUpdateLastNote: (String) -> Unit,
-    onNextVehicle: (String, Boolean) -> Unit,
-    onExistingVehicleSelected: (Long) -> Unit,
-    onCheckExisting: suspend (String) -> List<Folder>,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val coroutineScope = rememberCoroutineScope()
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
     
     val fusedLocationClient = remember { com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context) }
     var currentLocation by remember { mutableStateOf<android.location.Location?>(null) }
 
     var lastCapturedPath by remember { mutableStateOf<String?>(null) }
-    var lastCapturedIsVideo by remember { mutableStateOf(false) }
     var showFlash by remember { mutableStateOf(false) }
 
     var showNoteDialog by remember { mutableStateOf(false) }
@@ -90,39 +77,15 @@ fun CameraScreen(
     }
     
     val imageCapture = remember { ImageCapture.Builder().build() }
-    val recorder = remember { Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HIGHEST)).build() }
-    val videoCapture = remember { VideoCapture.withOutput(recorder) }
-    
     val previewView = remember { PreviewView(context) }
-    
-    var isVideoMode by remember { mutableStateOf(false) }
-    var isRecording by remember { mutableStateOf(false) }
-    var currentRecording by remember { mutableStateOf<Recording?>(null) }
     
     var flashMode by remember { mutableStateOf(ImageCapture.FLASH_MODE_OFF) }
     var isTorchOn by remember { mutableStateOf(false) }
     var camera by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
     
-    var showNextVehicleDialog by remember { mutableStateOf(false) }
-    var showScanner by remember { mutableStateOf(false) }
-    var nextVehicleName by remember { mutableStateOf("") }
-    
-    var conflictingVehicles by remember { mutableStateOf<List<Folder>>(emptyList()) }
-    var showConflictDialog by remember { mutableStateOf(false) }
-    
     var focusPoint by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
 
-    if (showScanner) {
-        OcrScanner(
-            onTextScanned = { 
-                nextVehicleName = it
-                showScanner = false
-            },
-            onCancel = { showScanner = false }
-        )
-    }
-
-    LaunchedEffect(isVideoMode) {
+    LaunchedEffect(Unit) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
@@ -132,12 +95,11 @@ fun CameraScreen(
 
             try {
                 cameraProvider.unbindAll()
-                val useCase = if (isVideoMode) videoCapture else imageCapture
                 val boundCamera = cameraProvider.bindToLifecycle(
                     lifecycleOwner,
                     CameraSelector.DEFAULT_BACK_CAMERA,
                     preview,
-                    useCase
+                    imageCapture
                 )
                 camera = boundCamera
                 camera?.cameraControl?.enableTorch(isTorchOn)
@@ -193,109 +155,70 @@ fun CameraScreen(
             }
         }
 
-        // Top Controls - Glassmorphism
-        Row(
+        Surface(
             modifier = Modifier
+                .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.4f))
-                .padding(top = 48.dp, bottom = 16.dp, start = 16.dp, end = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+                .statusBarsPadding()
+                .padding(16.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = Color.Black.copy(alpha = 0.58f)
         ) {
-            IconButton(
-                onClick = onBack,
-                modifier = Modifier.background(Color.White.copy(alpha = 0.2f), CircleShape)
+            Row(
+                modifier = Modifier.padding(6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
-            }
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                }
 
-            IconButton(
-                onClick = {
-                    when {
-                        !isTorchOn && flashMode == ImageCapture.FLASH_MODE_OFF -> {
-                            flashMode = ImageCapture.FLASH_MODE_AUTO
-                            isTorchOn = false
-                        }
-                        !isTorchOn && flashMode == ImageCapture.FLASH_MODE_AUTO -> {
-                            flashMode = ImageCapture.FLASH_MODE_ON
-                            isTorchOn = true
-                        }
-                        else -> {
-                            flashMode = ImageCapture.FLASH_MODE_OFF
-                            isTorchOn = false
+                Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                    Text("Job photos", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Text("Tap the preview to focus", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.labelMedium)
+                }
+
+                IconButton(
+                    onClick = {
+                        when {
+                            !isTorchOn && flashMode == ImageCapture.FLASH_MODE_OFF -> {
+                                flashMode = ImageCapture.FLASH_MODE_AUTO
+                                isTorchOn = false
+                            }
+                            !isTorchOn && flashMode == ImageCapture.FLASH_MODE_AUTO -> {
+                                flashMode = ImageCapture.FLASH_MODE_ON
+                                isTorchOn = true
+                            }
+                            else -> {
+                                flashMode = ImageCapture.FLASH_MODE_OFF
+                                isTorchOn = false
+                            }
                         }
                     }
-                },
-                modifier = Modifier.background(Color.White.copy(alpha = 0.2f), CircleShape)
-            ) {
-                val icon = when {
-                    isTorchOn -> Icons.Default.FlashOn
-                    flashMode == ImageCapture.FLASH_MODE_AUTO -> Icons.Default.FlashAuto
-                    else -> Icons.Default.FlashOff
+                ) {
+                    val icon = when {
+                        isTorchOn -> Icons.Default.FlashOn
+                        flashMode == ImageCapture.FLASH_MODE_AUTO -> Icons.Default.FlashAuto
+                        else -> Icons.Default.FlashOff
+                    }
+                    Icon(icon, contentDescription = "Flash Mode", tint = Color.White)
                 }
-                Icon(icon, contentDescription = "Flash Mode", tint = Color.White)
-            }
-
-            Row(
-                modifier = Modifier
-                    .background(Color.White.copy(alpha = 0.2f), MaterialTheme.shapes.medium)
-                    .padding(4.dp)
-            ) {
-                FilterChip(
-                    selected = !isVideoMode,
-                    onClick = { if (!isRecording) isVideoMode = false },
-                    label = { Text("Photo") },
-                    leadingIcon = { Icon(Icons.Default.CameraAlt, contentDescription = null) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        labelColor = Color.White,
-                        selectedLabelColor = Color.Black,
-                        selectedContainerColor = Color.White,
-                        iconColor = Color.White,
-                        selectedLeadingIconColor = Color.Black
-                    ),
-                    border = null
-                )
-                Spacer(Modifier.width(8.dp))
-                FilterChip(
-                    selected = isVideoMode,
-                    onClick = { if (!isRecording) isVideoMode = true },
-                    label = { Text("Video") },
-                    leadingIcon = { Icon(Icons.Default.Videocam, contentDescription = null) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        labelColor = Color.White,
-                        selectedLabelColor = Color.Black,
-                        selectedContainerColor = Color.White,
-                        iconColor = Color.White,
-                        selectedLeadingIconColor = Color.Black
-                    ),
-                    border = null
-                )
             }
         }
 
-        // Bottom Controls - Glassmorphism
-        Box(
+        Surface(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.4f))
-                .padding(bottom = 48.dp, top = 24.dp)
+                .navigationBarsPadding()
+                .padding(16.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = Color.Black.copy(alpha = 0.58f)
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp)
             ) {
-                if (isRecording) {
-                    Text(
-                        "Recording...",
-                        color = Color.Red,
-                        modifier = Modifier
-                            .background(Color.Black.copy(alpha = 0.5f), MaterialTheme.shapes.small)
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                    Spacer(Modifier.height(16.dp))
-                }
-
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(48.dp)
@@ -324,33 +247,13 @@ fun CameraScreen(
                         modifier = Modifier
                             .size(84.dp)
                             .clickable {
-                                if (isVideoMode) {
-                                    if (isRecording) {
-                                        currentRecording?.stop()
-                                        currentRecording = null
-                                        isRecording = false
-                                    } else {
-                                        currentRecording = recordVideo(context, videoCapture, folderId) { path ->
-                                            if (captureFeedbackEnabled) {
-                                                lastCapturedPath = path
-                                                lastCapturedIsVideo = true
-                                                showFlash = true
-                                            }
-                                            onMediaCaptured(path, true)
-                                        }
-                                        isRecording = true
+                                takePhoto(context, imageCapture, cameraExecutor, folderId, timestampEnabled, dateFormat, gpsEnabled, currentLocation, imageQuality) { path ->
+                                    if (captureFeedbackEnabled) {
+                                        lastCapturedPath = path
+                                        showFlash = true
+                                        showNoteDialog = true
                                     }
-                                } else {
-                                    takePhoto(context, imageCapture, cameraExecutor, folderId, timestampEnabled, dateFormat, gpsEnabled, currentLocation, imageQuality) { path ->
-                                        if (captureFeedbackEnabled) {
-                                            lastCapturedPath = path
-                                            lastCapturedIsVideo = false
-                                            showFlash = true
-                                            // Trigger note dialog
-                                            showNoteDialog = true
-                                        }
-                                        onMediaCaptured(path, false)
-                                    }
+                                    onMediaCaptured(path, false)
                                 }
                             }
                     ) {
@@ -363,34 +266,30 @@ fun CameraScreen(
                         Surface(
                             modifier = Modifier.size(68.dp),
                             shape = CircleShape,
-                            color = if (isRecording) Color.Red else Color.White,
+                            color = Color.White,
                             tonalElevation = 4.dp
                         ) {
                             Icon(
-                                imageVector = if (isRecording) Icons.Default.Stop else (if (isVideoMode) Icons.Default.Videocam else Icons.Default.CameraAlt),
+                                imageVector = Icons.Default.CameraAlt,
                                 contentDescription = "Capture",
-                                tint = if (isRecording) Color.White else Color.Black,
+                                tint = Color.Black,
                                 modifier = Modifier.padding(16.dp)
                             )
                         }
                     }
 
-                    IconButton(
-                        onClick = { showNextVehicleDialog = true },
-                        modifier = Modifier.background(Color.White.copy(alpha = 0.2f), CircleShape)
+                    FilledTonalIconButton(
+                        onClick = onBack,
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = Color.White,
+                            contentColor = Color.Black
+                        )
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Next Vehicle", tint = Color.White)
+                        Icon(Icons.Default.Check, contentDescription = "Done", tint = Color.White)
                     }
                 }
                 
-                if (!isRecording) {
-                    Text(
-                        "Next Vehicle",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                }
+                Text("Photo", color = Color.White.copy(alpha = 0.82f), style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
             }
         }
 
@@ -443,133 +342,6 @@ fun CameraScreen(
         )
     }
 
-    if (showNextVehicleDialog && !showScanner) {
-        AlertDialog(
-            onDismissRequest = { showNextVehicleDialog = false },
-            title = { Text("Next Vehicle") },
-            text = {
-                Column {
-                    Text("Finish documentation for this vehicle and start a new one?")
-                    Spacer(modifier = Modifier.height(16.dp))
-                    TextField(
-                        value = nextVehicleName,
-                        onValueChange = { nextVehicleName = it },
-                        placeholder = { Text("Enter Rego/VIN for next vehicle") },
-                        modifier = Modifier.fillMaxWidth(),
-                        trailingIcon = {
-                            IconButton(onClick = { showScanner = true }) {
-                                Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan")
-                            }
-                        }
-                    )
-                }
-            },
-            confirmButton = {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = {
-                        if (nextVehicleName.isNotBlank()) {
-                            coroutineScope.launch {
-                                val matches = onCheckExisting(nextVehicleName)
-                                if (matches.isNotEmpty()) {
-                                    conflictingVehicles = matches
-                                    showConflictDialog = true
-                                } else {
-                                    onNextVehicle(nextVehicleName, true) // Go to Checklist
-                                    showNextVehicleDialog = false
-                                    nextVehicleName = ""
-                                }
-                            }
-                        }
-                    }) {
-                        Text("Checklist")
-                    }
-                    Button(onClick = {
-                        if (nextVehicleName.isNotBlank()) {
-                            coroutineScope.launch {
-                                val matches = onCheckExisting(nextVehicleName)
-                                if (matches.isNotEmpty()) {
-                                    conflictingVehicles = matches
-                                    showConflictDialog = true
-                                } else {
-                                    onNextVehicle(nextVehicleName, false) // Go to Camera
-                                    showNextVehicleDialog = false
-                                    nextVehicleName = ""
-                                }
-                            }
-                        }
-                    }) {
-                        Text("Camera")
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showNextVehicleDialog = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    if (showConflictDialog) {
-        val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-        AlertDialog(
-            onDismissRequest = { showConflictDialog = false },
-            title = { Text("Vehicle Found") },
-            text = {
-                Column {
-                    Text("Vehicle '$nextVehicleName' already has documentation.")
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Select a record to add new photos to, or create a fresh entry.", style = MaterialTheme.typography.bodySmall)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    conflictingVehicles.forEach { folder ->
-                        OutlinedButton(
-                            onClick = {
-                                onExistingVehicleSelected(folder.id)
-                                showConflictDialog = false
-                                showNextVehicleDialog = false
-                                nextVehicleName = ""
-                            },
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                        ) {
-                            Text("Add to Existing (${dateFormat.format(Date(folder.createdAt))})")
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = {
-                        onNextVehicle(nextVehicleName, true)
-                        showConflictDialog = false
-                        showNextVehicleDialog = false
-                        nextVehicleName = ""
-                    }) {
-                        Text("Checklist")
-                    }
-                    Button(onClick = {
-                        onNextVehicle(nextVehicleName, false)
-                        showConflictDialog = false
-                        showNextVehicleDialog = false
-                        nextVehicleName = ""
-                    }) {
-                        Text("Camera")
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showConflictDialog = false }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
 }
 
 private fun takePhoto(
@@ -676,31 +448,4 @@ private fun addTimestampAndGpsToImage(file: File, formatPattern: String, gpsEnab
     } catch (e: Exception) {
         Log.e("CameraScreen", "Failed to add timestamp/GPS", e)
     }
-}
-
-private fun recordVideo(
-    context: Context,
-    videoCapture: VideoCapture<Recorder>,
-    folderId: Long,
-    onVideoRecorded: (String) -> Unit
-): Recording {
-    val outputDirectory = File(context.filesDir, "folders/$folderId")
-    if (!outputDirectory.exists()) outputDirectory.mkdirs()
-
-    val name = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(System.currentTimeMillis()) + ".mp4"
-    val videoFile = File(outputDirectory, name)
-
-    val outputOptions = FileOutputOptions.Builder(videoFile).build()
-
-    return videoCapture.output
-        .prepareRecording(context, outputOptions)
-        .start(ContextCompat.getMainExecutor(context)) { event ->
-            if (event is VideoRecordEvent.Finalize) {
-                if (!event.hasError()) {
-                    onVideoRecorded(videoFile.absolutePath)
-                } else {
-                    Log.e("CameraScreen", "Video recording error: ${event.error}")
-                }
-            }
-        }
 }

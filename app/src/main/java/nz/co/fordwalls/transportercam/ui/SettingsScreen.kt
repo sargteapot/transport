@@ -11,10 +11,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.foundation.shape.RoundedCornerShape
 import nz.co.fordwalls.transportercam.BuildConfig
 import nz.co.fordwalls.transportercam.UpdateManifest
 import nz.co.fordwalls.transportercam.UpdateState
@@ -51,6 +52,30 @@ fun SettingsScreen(
         )
     }
 
+    if (showChangeLog) {
+        AlertDialog(
+            onDismissRequest = { showChangeLog = false },
+            icon = { Icon(Icons.Default.AutoAwesome, contentDescription = null) },
+            title = { Text("What's new") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text("• Cleaner rounded dashboard and workflow controls", style = MaterialTheme.typography.bodyMedium)
+                    Text("• Photo-only camera and reliable checklist drafts", style = MaterialTheme.typography.bodyMedium)
+                    Text("• Delivery vehicle verification", style = MaterialTheme.typography.bodyMedium)
+                    Text("• Secure photo and signature evidence", style = MaterialTheme.typography.bodyMedium)
+                    Text("• Firebase driver authentication", style = MaterialTheme.typography.bodyMedium)
+                    Text("• Verified in-app updates", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Text("v1.3 Fleet Update", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text("• Job dispatch, pre-starts and dual sign-off", style = MaterialTheme.typography.bodyMedium)
+                    Text("• Wharf Scan global search", style = MaterialTheme.typography.bodyMedium)
+                }
+            },
+            confirmButton = { TextButton(onClick = { showChangeLog = false }) { Text("Done") } }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -67,37 +92,35 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            SettingsSection(title = "Company") {
+            SettingsSection(title = "Company", icon = Icons.Default.Business) {
                 ListItem(
                     headlineContent = { Text(companyName) },
                     supportingContent = { Text(companyId) },
-                    leadingContent = { Icon(Icons.Default.Business, null) }
+                    trailingContent = {
+                        IconButton(onClick = { confirmCompanyChange = true }) {
+                            Icon(Icons.Default.ChevronRight, contentDescription = "Change company")
+                        }
+                    },
+                    colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
                 )
-                OutlinedButton(onClick = { confirmCompanyChange = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Change company")
-                }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            SettingsSection(title = "Alerts") {
+            SettingsSection(title = "Preferences", icon = Icons.Default.Tune) {
                 SettingsSwitchRow(
                     title = "Job Notifications",
                     subtitle = "Sound and alert when a new job arrives",
                     checked = notificationsEnabled,
                     onCheckedChange = onNotificationsToggle
                 )
-            }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            SettingsSection(title = "App Appearance") {
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
                 SettingsDropdownRow(
-                    title = "Dark Mode",
-                    subtitle = "Choose your preferred theme",
+                    title = "Appearance",
+                    subtitle = "App colour theme",
                     currentValue = darkModeOptions.find { it.first == darkMode }?.second ?: "Follow System",
                     onExpand = { darkExpanded = true }
                 )
@@ -119,9 +142,9 @@ fun SettingsScreen(
                 }
             }
             
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            SettingsSection(title = "App updates") {
+            SettingsSection(title = "App update", icon = Icons.Default.SystemUpdate) {
                 UpdateSettings(
                     state = updateState,
                     onCheck = onCheckForUpdates,
@@ -130,58 +153,28 @@ fun SettingsScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             
-            SettingsSection(title = "About") {
-                TextButton(
-                    onClick = { showChangeLog = !showChangeLog },
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(0.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("View Change Log", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-                        Icon(
-                            imageVector = if (showChangeLog) Icons.Default.ArrowDropDown else Icons.Default.ArrowDropDown, 
-                            contentDescription = null,
-                            modifier = Modifier.rotate(if (showChangeLog) 90f else 0f),
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
-                
-                if (showChangeLog) {
-                    Column(modifier = Modifier.padding(top = 8.dp)) {
-                        Text("v1.3 (Fleet Update)", style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                        Text("• Added Firebase-backed Job Dispatch system", style = MaterialTheme.typography.bodySmall)
-                        Text("• Added Pre-start Checklist for truck and trailer", style = MaterialTheme.typography.bodySmall)
-                        Text("• Integrated Dual Sign-off and Status Tracking", style = MaterialTheme.typography.bodySmall)
-                        Text("• Added Wharf Scan global search", style = MaterialTheme.typography.bodySmall)
-                        
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text("v1.2 (Stability)", style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                        Text("• Fixed Checklist persistence and UI logic", style = MaterialTheme.typography.bodySmall)
-                        Text("• Added PDF Export and organized ZIP naming", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+            SettingsSection(title = "About", icon = Icons.Default.Info) {
+                SettingsActionRow(
+                    title = "What's new",
+                    subtitle = "Recent improvements and fixes",
+                    icon = Icons.Default.AutoAwesome,
+                    onClick = { showChangeLog = true }
+                )
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                ListItem(
+                    headlineContent = { Text("FW Driver") },
+                    supportingContent = { Text("Version ${BuildConfig.VERSION_NAME} · Build ${BuildConfig.VERSION_CODE}") },
+                    leadingContent = { Icon(Icons.Default.LocalShipping, contentDescription = null) },
+                    colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+                )
             }
             
-            Spacer(modifier = Modifier.height(48.dp))
-            
-            Text(
-                "FW Driver v${BuildConfig.VERSION_NAME}",
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline
-            )
-            
+            Spacer(modifier = Modifier.height(24.dp))
             Text(
                 "created by Jesse Walls",
-                modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp),
+                modifier = Modifier.align(Alignment.CenterHorizontally).padding(bottom = 16.dp),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
             )
@@ -198,17 +191,18 @@ private fun UpdateSettings(
 ) {
     when (state) {
         UpdateState.Idle -> {
-            Text("Updates are checked automatically when FW Driver starts.", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = onCheck, modifier = Modifier.fillMaxWidth()) { Text("Check for updates") }
+            UpdateStatusRow(Icons.Default.Update, "Ready to check", "Updates are also checked when FW Driver starts")
+            OutlinedButton(onClick = onCheck, modifier = Modifier.fillMaxWidth()) { Text("Check now") }
         }
         UpdateState.Checking -> UpdateProgress("Checking for updates…")
         UpdateState.UpToDate -> {
             ListItem(
                 headlineContent = { Text("FW Driver is up to date") },
                 supportingContent = { Text("Installed version ${BuildConfig.VERSION_NAME}") },
-                leadingContent = { Icon(Icons.Default.CheckCircle, null) }
+                leadingContent = { Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary) },
+                colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
             )
-            OutlinedButton(onClick = onCheck, modifier = Modifier.fillMaxWidth()) { Text("Check again") }
+            TextButton(onClick = onCheck, modifier = Modifier.fillMaxWidth()) { Text("Check again") }
         }
         is UpdateState.Available -> {
             UpdateDetails(state.manifest, state.required)
@@ -236,7 +230,10 @@ private fun UpdateSettings(
             )
         }
         is UpdateState.Error -> {
-            Text(state.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            val friendlyMessage = if (state.message.contains("JSON", ignoreCase = true)) {
+                "The update service is not configured correctly."
+            } else state.message
+            UpdateStatusRow(Icons.Default.CloudOff, "Update unavailable", friendlyMessage, isError = true)
             val retryManifest = state.manifest
             OutlinedButton(
                 onClick = { if (retryManifest == null) onCheck() else onDownload(retryManifest) },
@@ -251,7 +248,8 @@ private fun UpdateDetails(manifest: UpdateManifest, required: Boolean) {
     ListItem(
         headlineContent = { Text("FW Driver ${manifest.versionName}") },
         supportingContent = { Text(if (required) "Required update" else "Update available") },
-        leadingContent = { Icon(Icons.Default.SystemUpdate, null) }
+        leadingContent = { Icon(Icons.Default.SystemUpdate, null) },
+        colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
     )
     if (manifest.releaseNotes.isNotEmpty()) {
         Text("What's new", style = MaterialTheme.typography.labelLarge)
@@ -262,7 +260,7 @@ private fun UpdateDetails(manifest: UpdateManifest, required: Boolean) {
 
 @Composable
 private fun UpdateProgress(label: String, progress: Int? = null) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier = Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(label, style = MaterialTheme.typography.bodyMedium)
         if (progress == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         else LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
@@ -270,15 +268,63 @@ private fun UpdateProgress(label: String, progress: Int? = null) {
 }
 
 @Composable
-fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-        content()
+fun SettingsSection(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(7.dp).size(18.dp)
+                    )
+                }
+                Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(6.dp))
+            content()
+        }
+    }
+}
+
+@Composable
+private fun UpdateStatusRow(icon: ImageVector, title: String, subtitle: String, isError: Boolean = false) {
+    ListItem(
+        headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
+        supportingContent = { Text(subtitle) },
+        leadingContent = {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = if (isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+            )
+        },
+        colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+    )
+}
+
+@Composable
+private fun SettingsActionRow(title: String, subtitle: String, icon: ImageVector, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(16.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -288,7 +334,7 @@ fun SettingsSwitchRow(title: String, subtitle: String, checked: Boolean, onCheck
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 4.dp),
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -305,7 +351,7 @@ fun SettingsDropdownRow(title: String, subtitle: String, currentValue: String, o
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onExpand() }
-            .padding(vertical = 4.dp),
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {

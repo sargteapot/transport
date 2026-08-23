@@ -31,7 +31,7 @@ fun ChecklistScreen(
     initialChecklistJson: String?,
     isDelivery: Boolean = false,
     onSave: (String) -> Unit,
-    onAddPhotos: () -> Unit,
+    onAddPhotos: (String) -> Unit,
     onBack: () -> Unit
 ) {
     val baseParts = listOf(
@@ -62,13 +62,7 @@ fun ChecklistScreen(
         Pair("Notes", true)
     )
 
-    val defaultParts = remember(isDelivery) {
-        if (isDelivery) {
-            baseParts + Pair("Receiver Name", true)
-        } else {
-            baseParts
-        }
-    }
+    val defaultParts = baseParts
 
     val checklistItems = remember { mutableStateListOf<ChecklistItem>() }
     var hasInitializedFromData by remember { mutableStateOf(false) }
@@ -80,11 +74,7 @@ fun ChecklistScreen(
                 try {
                     val items = Json.decodeFromString<List<ChecklistItem>>(initialChecklistJson)
                     checklistItems.clear()
-                    checklistItems.addAll(items)
-                    
-                    if (isDelivery && checklistItems.none { it.part == "Receiver Name" }) {
-                        checklistItems.add(ChecklistItem(part = "Receiver Name", isTextFieldOnly = true, status = ""))
-                    }
+                    checklistItems.addAll(items.filterNot { it.part == "Receiver Name" })
                     
                     hasInitializedFromData = true
                 } catch (e: Exception) {}
@@ -117,7 +107,7 @@ fun ChecklistScreen(
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = onAddPhotos,
+                onClick = { onAddPhotos(Json.encodeToString(checklistItems.toList())) },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary
             ) {
@@ -152,14 +142,6 @@ fun ChecklistScreen(
                                 return@Button
                             }
 
-                            if (isDelivery) {
-                                val receiverItem = checklistItems.find { it.part == "Receiver Name" }
-                                if (receiverItem == null || receiverItem.otherDetails.isNullOrBlank()) {
-                                    errorMessage = "⚠️ Please fill in the 'Receiver Name' field."
-                                    return@Button
-                                }
-                            }
-
                             errorMessage = null
                             val json = Json.encodeToString(checklistItems.toList())
                             onSave(json)
@@ -186,7 +168,7 @@ fun ChecklistScreen(
                     },
                     onOtherDetailsChange = { details ->
                         checklistItems[index] = checklistItems[index].copy(otherDetails = details)
-                        if ((item.part == "Keys" || item.part == "Receiver Name") && details.isNotBlank()) {
+                        if (item.part == "Keys" && details.isNotBlank()) {
                             errorMessage = null
                         }
                     }
@@ -220,7 +202,7 @@ fun ChecklistRow(
             Spacer(Modifier.height(8.dp))
             
             if (item.isTextFieldOnly) {
-                val isMandatory = item.part == "Keys" || item.part == "Receiver Name"
+                val isMandatory = item.part == "Keys"
                 OutlinedTextField(
                     value = item.otherDetails ?: "",
                     onValueChange = onOtherDetailsChange,

@@ -18,8 +18,8 @@ android {
         applicationId = "nz.co.fordwalls.transportercam"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.4.3"
+        versionCode = 8
+        versionName = "1.4.4"
 
         val updateManifestUrl = providers.gradleProperty("FW_UPDATE_MANIFEST_URL")
             .orElse("https://transportercam-2ec51107.web.app/downloads/fw-driver-update.json")
@@ -75,7 +75,6 @@ dependencies {
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.video)
     implementation(libs.androidx.camera.view)
     implementation(libs.androidx.exifinterface)
     implementation(libs.androidx.datastore.preferences)

@@ -20,6 +20,7 @@ import nz.co.fordwalls.transportercam.database.JobStatus
 @Composable
 fun VerificationScreen(
     jobId: String,
+    isDelivery: Boolean = false,
     viewModel: MainViewModel,
     onVerified: (Long, String, String?) -> Unit,
     onBack: () -> Unit
@@ -45,7 +46,7 @@ fun VerificationScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Verify Vehicle") },
+                title = { Text(if (isDelivery) "Verify Delivery Vehicle" else "Verify Pickup Vehicle") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -69,7 +70,7 @@ fun VerificationScreen(
             )
             
             Text(
-                text = "Searching booked and accepted jobs",
+                text = if (isDelivery) "Confirm this is the vehicle being delivered" else "Searching booked and accepted jobs",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp, bottom = 32.dp)
@@ -115,15 +116,20 @@ fun VerificationScreen(
                     }
                     
                     isVerifying = true
-                    // Search for NEW or ACCEPTED jobs matching this truck
-                    val matchedJob = jobs.find { 
-                        it.rego.equals(regoInput, ignoreCase = true) && 
-                        (it.status == JobStatus.ACCEPTED || it.status == JobStatus.NEW)
+                    val normalizedRego = regoInput.trim()
+                    val matchedJob = jobs.find {
+                        val requestedJobMatches = jobId.isBlank() || it.id == jobId
+                        val statusMatches = if (isDelivery) {
+                            it.status == JobStatus.PICKED_UP
+                        } else {
+                            it.status == JobStatus.ACCEPTED || it.status == JobStatus.NEW
+                        }
+                        requestedJobMatches && it.rego.trim().equals(normalizedRego, ignoreCase = true) && statusMatches
                     }
                     
                     if (matchedJob != null) {
                         // AUTO-ACCEPT: If job is still NEW, accept it automatically
-                        if (matchedJob.status == JobStatus.NEW) {
+                        if (!isDelivery && matchedJob.status == JobStatus.NEW) {
                             viewModel.updateJobStatus(matchedJob.id, JobStatus.ACCEPTED)
                         }
 
@@ -133,7 +139,11 @@ fun VerificationScreen(
                         }
                     } else {
                         isVerifying = false
-                        errorMessage = "No booked or accepted job found for '$regoInput'"
+                        errorMessage = if (isDelivery) {
+                            "This rego does not match the delivery vehicle."
+                        } else {
+                            "No booked or accepted job found for '$normalizedRego'"
+                        }
                     }
                 },
                 modifier = Modifier

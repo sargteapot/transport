@@ -4,7 +4,7 @@ The FordWalls driver app for receiving transport jobs, completing daily pre-star
 
 ## Download
 
-[![Click here to download FW Driver](https://img.shields.io/badge/CLICK_HERE_TO_DOWNLOAD-FW_DRIVER_v1.4.0-168A5B?style=for-the-badge&logo=android&logoColor=white)](https://github.com/sargteapot/transport/raw/refs/tags/v1.4.0/release/FW_Driver_v1.4.0.apk)
+[![Click here to download FW Driver](https://img.shields.io/badge/CLICK_HERE_TO_DOWNLOAD-FW_DRIVER_v1.4.4-168A5B?style=for-the-badge&logo=android&logoColor=white)](https://transportercam-2ec51107.web.app/downloads/fw-driver-1.4.4-debug.apk)
 
 Android may ask for permission to install an app from your browser or file manager. Allow it when prompted, then open the downloaded APK.
 
@@ -14,7 +14,7 @@ Android may ask for permission to install an app from your browser or file manag
 
 ## Current release
 
-**FW Driver v1.4.3 updater test**
+**FW Driver v1.4.4**
 
 - Multi-company selection and isolated company data
 - Mandatory daily vehicle pre-start
@@ -22,10 +22,14 @@ Android may ask for permission to install an app from your browser or file manag
 - Driver job dispatch, quick acceptance, pickup and delivery checks
 - Signatures, photos, and completed-job management
 - Improved dark-mode contrast and mobile button layouts
+- Rounded, consistent dashboard, camera, Settings and workflow controls
+- Photo-only job evidence camera with a simpler Done flow
+- Pickup and delivery checklist drafts are retained when adding photos
+- Delivery vehicle verification now matches the pickup scan workflow
 
 ### Photo and signature cloud evidence
 
-- Job-linked photos and videos are saved on the phone first, then uploaded to
+- Job-linked photos are saved on the phone first, then uploaded to
   Firebase Storage under the authenticated driver, selected company and job.
 - Driver login is verified by the `driverLogin` callable function and exchanged
   for a Firebase Authentication custom token. The app no longer queries
@@ -39,7 +43,7 @@ Android may ask for permission to install an app from your browser or file manag
 - Storage download tokens are not copied into Firestore. Only the protected
   Storage path is recorded, and FW Dispatch resolves it for an authorised user.
 - FW Dispatch Build 17 reads the same job evidence records and displays the
-  original photos, videos and signatures.
+  original photos, legacy videos and signatures.
 
 ### In-app updates
 
@@ -58,10 +62,10 @@ The manifest format is:
 
 ```json
 {
-  "versionCode": 7,
-  "versionName": "1.4.3",
+  "versionCode": 8,
+  "versionName": "1.4.4",
   "minimumVersionCode": 6,
-  "apkUrl": "https://example.web.app/downloads/fw-driver-1.4.3.apk",
+  "apkUrl": "https://example.web.app/downloads/fw-driver-1.4.4.apk",
   "sha256": "64-character lowercase SHA-256 value",
   "releaseNotes": ["First change", "Second change"]
 }

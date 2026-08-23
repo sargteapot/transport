@@ -42,7 +42,6 @@ class MainActivity : ComponentActivity() {
 
         val permissions = mutableListOf(
             Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO,
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
@@ -175,6 +174,7 @@ fun AppNavigation(
     val darkMode by viewModel.darkMode.collectAsState(initial = "auto")
     val shareSummaryEnabled by viewModel.shareSummaryEnabled.collectAsState(initial = true)
     val updateState by viewModel.updateState.collectAsState()
+    val jobs by viewModel.jobs.collectAsState()
 
     androidx.activity.compose.BackHandler(enabled = navigationStack.size > 1) {
         navigationStack = navigationStack.dropLast(1)
@@ -276,14 +276,8 @@ fun AppNavigation(
                 viewModel = viewModel,
                 onAccept = { /* Handled in screen */ },
                 onScan = { navigationStack = navigationStack + Screen.Verification(screen.jobId) },
-                onConfirmDelivery = { matchedId, rego -> 
-                    viewModel.getOrCreateFolderForJob(matchedId, rego) { folderId, error ->
-                        if (folderId > 0) {
-                            navigationStack = navigationStack + Screen.Checklist(folderId, isDelivery = true)
-                        } else {
-                            Toast.makeText(context, error ?: "Error identifying vehicle.", Toast.LENGTH_LONG).show()
-                        }
-                    }
+                onConfirmDelivery = { matchedId ->
+                    navigationStack = navigationStack + Screen.Verification(matchedId, isDelivery = true)
                 },
                 onBack = { navigationStack = navigationStack.dropLast(1) }
             )
@@ -291,10 +285,11 @@ fun AppNavigation(
         is Screen.Verification -> {
             VerificationScreen(
                 jobId = screen.jobId,
+                isDelivery = screen.isDelivery,
                 viewModel = viewModel,
                 onVerified = { folderId, matchedJobId, error -> 
                     if (folderId > 0) {
-                        navigationStack = navigationStack.dropLast(1) + Screen.Checklist(folderId, isDelivery = false) 
+                        navigationStack = navigationStack.dropLast(1) + Screen.Checklist(folderId, isDelivery = screen.isDelivery)
                     } else {
                         Toast.makeText(context, error ?: "Error creating vehicle folder.", Toast.LENGTH_SHORT).show()
                     }
@@ -353,28 +348,7 @@ fun AppNavigation(
                 onUpdateLastNote = { note ->
                     viewModel.updateLastMediaNote(screen.folderId, note)
                 },
-                onNextVehicle = { name, goToChecklist ->
-                    viewModel.createFolder(name) { newFolderId ->
-                        if (goToChecklist) {
-                            navigationStack = navigationStack.dropLast(1) + Screen.Checklist(newFolderId, isDelivery = false)
-                        } else {
-                            navigationStack = navigationStack.dropLast(1) + Screen.Camera(newFolderId)
-                        }
-                    }
-                },
-                onExistingVehicleSelected = { folderId ->
-                    navigationStack = navigationStack.dropLast(1) + Screen.Checklist(folderId, isDelivery = false)
-                },
-                onCheckExisting = { name ->
-                    viewModel.getFoldersByName(name)
-                },
-                onBack = { 
-                    if (screen.folderId == 0L) {
-                        navigationStack = navigationStack.dropLast(1)
-                    } else {
-                        navigationStack = navigationStack.dropLast(1) + Screen.Gallery(screen.folderId)
-                    }
-                }
+                onBack = { navigationStack = navigationStack.dropLast(1) }
             )
         }
         is Screen.Gallery -> {
@@ -398,22 +372,38 @@ fun AppNavigation(
         }
         is Screen.Checklist -> {
             val folder by viewModel.getFolderById(screen.folderId).collectAsState(initial = null)
-            ChecklistScreen(
-                folderName = folder?.name ?: "Loading...",
-                initialChecklistJson = folder?.checklistJson,
-                isDelivery = screen.isDelivery, 
-                onSave = { json ->
-                    viewModel.updateFolderChecklist(screen.folderId, json)
-                    navigationStack = navigationStack.dropLast(1) + Screen.Signature(
-                        folder?.jobId ?: "", 
-                        isDriver = !screen.isDelivery
-                    )
-                },
-                onAddPhotos = {
-                    navigationStack = navigationStack + Screen.Camera(screen.folderId)
-                },
-                onBack = { navigationStack = navigationStack.dropLast(1) }
-            )
+            if (folder == null) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            } else {
+                val linkedJob = folder!!.jobId?.let { jobId -> jobs.find { it.id == jobId } }
+                val phaseChecklistJson = if (linkedJob == null) {
+                    folder!!.checklistJson
+                } else if (screen.isDelivery) {
+                    linkedJob.dropoffChecklistJson
+                        ?: folder!!.checklistJson?.takeUnless { it == linkedJob.pickupChecklistJson }
+                } else {
+                    linkedJob.pickupChecklistJson ?: folder!!.checklistJson
+                }
+                ChecklistScreen(
+                    folderName = folder!!.name,
+                    initialChecklistJson = phaseChecklistJson,
+                    isDelivery = screen.isDelivery,
+                    onSave = { json ->
+                        viewModel.updateFolderChecklist(screen.folderId, json) {
+                            navigationStack = navigationStack.dropLast(1) + Screen.Signature(
+                                folder!!.jobId ?: "",
+                                isDriver = !screen.isDelivery
+                            )
+                        }
+                    },
+                    onAddPhotos = { draftJson ->
+                        viewModel.updateFolderChecklist(screen.folderId, draftJson) {
+                            navigationStack = navigationStack + Screen.Camera(screen.folderId)
+                        }
+                    },
+                    onBack = { navigationStack = navigationStack.dropLast(1) }
+                )
+            }
         }
         is Screen.MediaDetail -> {
             val folder by viewModel.getFolderById(screen.folderId).collectAsState(initial = null)

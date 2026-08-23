@@ -29,7 +29,7 @@ fun JobDetailScreen(
     viewModel: MainViewModel,
     onAccept: () -> Unit,
     onScan: () -> Unit,
-    onConfirmDelivery: (String, String) -> Unit,
+    onConfirmDelivery: (String) -> Unit,
     onBack: () -> Unit
 ) {
     val jobs by viewModel.jobs.collectAsState()
@@ -153,7 +153,7 @@ fun JobDetailScreen(
                         }
                         JobStatus.PICKED_UP -> {
                             Button(
-                                onClick = { onConfirmDelivery(job.id, job.rego) },
+                                onClick = { onConfirmDelivery(job.id) },
                                 modifier = Modifier.fillMaxWidth().height(56.dp),
                                 shape = MaterialTheme.shapes.medium
                             ) {
