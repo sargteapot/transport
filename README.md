@@ -4,7 +4,7 @@ The FordWalls driver app for receiving transport jobs, completing daily pre-star
 
 ## Download
 
-[![Click here to download FW Driver](https://img.shields.io/badge/CLICK_HERE_TO_DOWNLOAD-FW_DRIVER_v1.4.4-168A5B?style=for-the-badge&logo=android&logoColor=white)](https://transportercam-2ec51107.web.app/downloads/fw-driver-1.4.4-debug.apk)
+[![Click here to download FW Driver](https://img.shields.io/badge/CLICK_HERE_TO_DOWNLOAD-FW_DRIVER_v1.4.4-168A5B?style=for-the-badge&logo=android&logoColor=white)](https://github.com/sargteapot/transport/raw/refs/heads/main/release/FW_Driver_v1.4.4.apk)
 
 Android may ask for permission to install an app from your browser or file manager. Allow it when prompted, then open the downloaded APK.
 
