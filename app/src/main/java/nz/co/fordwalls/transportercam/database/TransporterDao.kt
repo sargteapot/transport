@@ -8,6 +8,24 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TransporterDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPendingSync(item: PendingSync): Long
+
+    @Query("SELECT * FROM pending_sync ORDER BY createdAt ASC LIMIT :limit")
+    suspend fun getPendingSync(limit: Int = 50): List<PendingSync>
+
+    @Query("DELETE FROM pending_sync WHERE id = :id")
+    suspend fun deletePendingSync(id: Long)
+
+    @Query("UPDATE pending_sync SET attempts = attempts + 1, lastError = :error WHERE id = :id")
+    suspend fun markPendingSyncFailed(id: Long, error: String)
+
+    @Query("SELECT DISTINCT targetId FROM pending_sync WHERE companyId = :companyId AND type IN ('JOB_STATUS','CHECKLIST','SIGNATURE')")
+    suspend fun getPendingJobIds(companyId: String): List<String>
+
+    @Query("SELECT * FROM media_assets WHERE cloudState IN ('PENDING','FAILED') ORDER BY timestamp ASC")
+    suspend fun getMediaAwaitingUpload(): List<MediaAsset>
+
     @Query("SELECT * FROM folders WHERE companyId = :companyId ORDER BY createdAt DESC")
     fun getAllFolders(companyId: String): Flow<List<Folder>>
 
@@ -22,6 +40,9 @@ interface TransporterDao {
 
     @Query("SELECT * FROM folders WHERE id = :folderId AND companyId = :companyId")
     suspend fun getFolderByIdOnce(companyId: String, folderId: Long): Folder?
+
+    @Query("SELECT * FROM folders WHERE id = :folderId")
+    suspend fun getFolderByIdOnceForWorker(folderId: Long): Folder?
 
     @Query("SELECT media_assets.* FROM media_assets INNER JOIN folders ON folders.id = media_assets.folderId WHERE media_assets.folderId = :folderId AND folders.companyId = :companyId ORDER BY timestamp ASC")
     fun getMediaForFolder(companyId: String, folderId: Long): Flow<List<MediaAsset>>

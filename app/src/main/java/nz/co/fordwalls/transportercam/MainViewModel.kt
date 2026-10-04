@@ -45,6 +45,8 @@ import nz.co.fordwalls.transportercam.ui.PrestartItem
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import org.json.JSONArray
+import org.json.JSONObject
 
 private data class StoredSession(
     val companyId: String?,
@@ -144,8 +146,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var unauthenticatedSessionCleanupJob: CoroutineJob? = null
     private var activeSessionKey: String? = null
 
+    private suspend fun queueSync(companyId: String, type: String, targetId: String, payload: JSONObject) {
+        dao.insertPendingSync(PendingSync(companyId = companyId, type = type, targetId = targetId, payload = payload.toString()))
+        OfflineSync.schedule(getApplication())
+    }
+
     init {
         createNotificationChannel()
+        // Re-arm any work left behind by a process kill or device restart.
+        OfflineSync.schedule(application)
         appUpdater.check()
         auth.addAuthStateListener(authStateListener)
         if (firestoreResult.isFailure) {
@@ -359,11 +368,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 
-                _jobs.value = jobList
-                
                 viewModelScope.launch {
                     try {
-                        jobList.forEach { dao.insertJob(it) }
+                        val pendingIds = dao.getPendingJobIds(companyId).toSet()
+                        val mergedJobs = jobList.map { remote ->
+                            if (remote.id in pendingIds) dao.getJobById(companyId, remote.id) ?: remote else remote
+                        }
+                        mergedJobs.forEach { dao.insertJob(it) }
+                        _jobs.value = mergedJobs
                     } catch (e: Exception) {
                         Log.e("FleetDebug", "Failed to sync jobs to local DB: ${e.message}")
                     }
@@ -553,20 +565,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 "time" to timeStr
             )
 
-            paths.prestarts(companyId, fleet).document(docId)
-                .set(payload)
-                .addOnSuccessListener {
-                    Log.d("FleetDebug", "Prestart saved successfully: $docId")
-                    if (_activeCompanyId.value == companyId) {
-                        _prestartRequired.value = false
-                        _prestartCheckError.value = null
-                    }
-                    viewModelScope.launch { withContext(Dispatchers.Main) { onComplete(true) } }
-                }
-                .addOnFailureListener { e ->
-                    Log.e("FleetDebug", "Failed to save prestart: ${e.message}")
-                    viewModelScope.launch { withContext(Dispatchers.Main) { onComplete(false) } }
-                }
+            val data = JSONObject().apply { payload.forEach { (key, value) -> put(key, value) } }
+            queueSync(companyId, "PRESTART", docId, JSONObject().put("fleet", fleet).put("data", data))
+            _prestartRequired.value = false
+            _prestartCheckError.value = null
+            withContext(Dispatchers.Main) { onComplete(true) }
         }
     }
 
@@ -621,21 +624,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateJobStatus(jobId: String, status: JobStatus) {
         val companyId = _activeCompanyId.value ?: return
         Log.d("FleetDebug", "Updating job $jobId to status: ${status.name}")
-        paths.jobs(companyId).document(jobId)
-            .update("status", status.name)
-            .addOnSuccessListener {
-                Log.d("FleetDebug", "Firestore status update success for $jobId")
-                viewModelScope.launch {
-                    try {
-                        dao.updateJobStatus(companyId, jobId, status)
-                    } catch (e: Exception) {
-                        Log.e("FleetDebug", "Local DB update failed for $jobId: ${e.message}")
-                    }
-                }
-            }
-            .addOnFailureListener { e ->
-                Log.e("FleetDebug", "Firestore status update failed for $jobId: ${e.message}")
-            }
+        viewModelScope.launch {
+            dao.updateJobStatus(companyId, jobId, status)
+            _jobs.value = _jobs.value.map { if (it.companyId == companyId && it.id == jobId) it.copy(status = status) else it }
+            queueSync(companyId, "JOB_STATUS", jobId, JSONObject().put("status", status.name))
+        }
     }
 
     fun clearDoneJobs(onComplete: (Boolean) -> Unit) {
@@ -644,6 +637,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?: return onComplete(true)
         val doneJobs = _jobs.value.filter { it.status == JobStatus.DONE }
         if (doneJobs.isEmpty()) return onComplete(true)
+
+        viewModelScope.launch {
+            doneJobs.forEach { job ->
+                queueSync(companyId, "CLEAR_JOB", job.id, JSONObject().put("fleet", fleet))
+            }
+            _jobs.value = _jobs.value.filterNot { it.status == JobStatus.DONE }
+            withContext(Dispatchers.Main) { onComplete(true) }
+        }
+        return
 
         val batches = doneJobs.chunked(450)
 
@@ -756,6 +758,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val file = File(getApplication<Application>().filesDir, "jobs/$companyId/$jobId/$filename")
                 file.parentFile?.mkdirs()
                 file.outputStream().use { out -> bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out) }
+                // Commit the business action locally first. The durable worker owns the
+                // upload, so signing works identically with or without signal.
+                val queuedRole = if (isDriver) "driver" else "customer"
+                val queuedEvidenceId = "$queuedRole-signature"
+                val queuedUid = auth.currentUser?.uid.orEmpty()
+                if (queuedUid.isBlank()) throw IllegalStateException("The secure driver session has expired")
+                val queuedPath = "companies/${safeStorageSegment(companyId)}/drivers/${safeStorageSegment(queuedUid)}/jobs/${safeStorageSegment(jobId)}/evidence/signatures/$queuedEvidenceId.png"
+                if (isDriver) dao.markJobAsPickedUp(companyId, jobId, name.trim(), queuedPath)
+                else dao.markJobAsDone(companyId, jobId, name.trim(), queuedPath)
+                _jobs.value = _jobs.value.map {
+                    if (it.companyId == companyId && it.id == jobId) {
+                        if (isDriver) it.copy(driverName = name.trim(), driverSignatureUrl = queuedPath, status = nextStatus)
+                        else it.copy(customerName = name.trim(), customerSignatureUrl = queuedPath, status = nextStatus)
+                    } else it
+                }
+                queueSync(companyId, "SIGNATURE", jobId, JSONObject()
+                    .put("file", file.absolutePath).put("storagePath", queuedPath)
+                    .put("evidenceId", queuedEvidenceId).put("name", name.trim())
+                    .put("nameField", if (isDriver) "driverName" else "customerName")
+                    .put("pathField", if (isDriver) "driverSignaturePath" else "customerSignaturePath")
+                    .put("status", nextStatus.name))
+                withContext(Dispatchers.Main) { onComplete(true) }
+                return@launch
                 if (storageResult.isFailure) throw storageResult.exceptionOrNull() ?: IllegalStateException("Firebase Storage is unavailable")
 
                 val role = if (isDriver) "driver" else "customer"
@@ -888,24 +913,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                         val isPickup = job.status == JobStatus.ACCEPTED || job.status == JobStatus.NEW
                         val fieldName = if (isPickup) "pickupChecklist" else "dropoffChecklist"
-                        
-                        paths.jobs(companyId).document(jobId)
-                            .update(
-                                mapOf(
-                                    fieldName to checklistList,
-                                    "${fieldName}Json" to checklistJson
-                                )
-                            )
-                            .addOnSuccessListener {
-                                Log.d("FleetDebug", "Firestore checklist update success for field $fieldName")
-                                viewModelScope.launch {
-                                    if (isPickup) {
-                                        dao.updateJobPickupChecklist(companyId, jobId, checklistJson)
-                                    } else {
-                                        dao.updateJobDeliveryChecklist(companyId, jobId, checklistJson)
-                                    }
-                                }
-                            }
+                        if (isPickup) dao.updateJobPickupChecklist(companyId, jobId, checklistJson)
+                        else dao.updateJobDeliveryChecklist(companyId, jobId, checklistJson)
+                        val array = JSONArray().apply {
+                            checklistList.forEach { row -> put(JSONObject().apply { row.forEach { (k, v) -> put(k, v) } }) }
+                        }
+                        queueSync(companyId, "CHECKLIST", jobId, JSONObject()
+                            .put("field", fieldName).put("json", checklistJson).put("items", array))
                     }
                 }
             }
@@ -962,7 +976,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 mainResult(onUploadComplete, true, "Saved on this phone. This media is not linked to a dispatched job.")
                 return@launch
             }
-            uploadMediaAsset(companyId, asset, job, onUploadComplete)
+            OfflineSync.schedule(getApplication())
+            mainResult(onUploadComplete, true, if (isVideo) "Video saved and queued for FW Dispatch." else "Photo saved and queued for FW Dispatch.")
         }
     }
 
@@ -977,7 +992,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ?: return@launch mainResult(onUploadComplete, false, "This photo is not linked to a dispatched job.")
             val job = dao.getJobById(companyId, jobId)
                 ?: return@launch mainResult(onUploadComplete, false, "The linked job is no longer available on this phone.")
-            uploadMediaAsset(companyId, asset.copy(jobId = jobId), job, onUploadComplete)
+            dao.updateMediaCloudState(companyId, asset.id, asset.evidenceId, asset.evidencePhase, "PENDING", asset.storagePath, null, null)
+            OfflineSync.schedule(getApplication())
+            mainResult(onUploadComplete, true, "Upload queued. It will sync when a connection is available.")
         }
     }
 

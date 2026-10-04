@@ -18,8 +18,8 @@ android {
         applicationId = "nz.co.fordwalls.transportercam"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.4.4"
+        versionCode = 9
+        versionName = "1.4.5"
 
         val updateManifestUrl = providers.gradleProperty("FW_UPDATE_MANIFEST_URL")
             .orElse("https://transportercam-2ec51107.web.app/downloads/fw-driver-update.json")
@@ -65,6 +65,8 @@ dependencies {
     implementation(libs.firebase.firestore)
     implementation(libs.firebase.functions)
     implementation(libs.firebase.storage)
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.kotlinx.coroutines.play.services)
 
     // Room
     implementation(libs.androidx.room.runtime)

@@ -4,7 +4,7 @@ The FordWalls driver app for receiving transport jobs, completing daily pre-star
 
 ## Download
 
-[![Click here to download FW Driver](https://img.shields.io/badge/CLICK_HERE_TO_DOWNLOAD-FW_DRIVER_v1.4.4-168A5B?style=for-the-badge&logo=android&logoColor=white)](https://github.com/sargteapot/transport/raw/refs/heads/main/release/FW_Driver_v1.4.4.apk)
+[![Click here to download FW Driver](https://img.shields.io/badge/CLICK_HERE_TO_DOWNLOAD-FW_DRIVER_v1.4.5-168A5B?style=for-the-badge&logo=android&logoColor=white)](https://github.com/sargteapot/transport/raw/refs/heads/main/release/FW_Driver_v1.4.5.apk)
 
 Android may ask for permission to install an app from your browser or file manager. Allow it when prompted, then open the downloaded APK.
 
@@ -14,7 +14,12 @@ Android may ask for permission to install an app from your browser or file manag
 
 ## Current release
 
-**FW Driver v1.4.4**
+**FW Driver v1.4.5**
+
+- Full offline workflow after the initial authenticated job download
+- Durable local queue for job statuses, checklists, pre-starts and completed-job clearing
+- Photos, videos and signatures automatically upload when connectivity returns
+- Pending local changes survive app and device restarts without being replaced by stale cloud data
 
 - Multi-company selection and isolated company data
 - Mandatory daily vehicle pre-start
@@ -62,8 +67,8 @@ The manifest format is:
 
 ```json
 {
-  "versionCode": 8,
-  "versionName": "1.4.4",
+  "versionCode": 9,
+  "versionName": "1.4.5",
   "minimumVersionCode": 6,
   "apkUrl": "https://example.web.app/downloads/fw-driver-1.4.4.apk",
   "sha256": "64-character lowercase SHA-256 value",
