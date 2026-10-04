@@ -4,7 +4,7 @@ The FordWalls driver app for receiving transport jobs, completing daily pre-star
 
 ## Download
 
-[![Click here to download FW Driver](https://img.shields.io/badge/CLICK_HERE_TO_DOWNLOAD-FW_DRIVER_v1.4.5-168A5B?style=for-the-badge&logo=android&logoColor=white)](https://github.com/sargteapot/transport/raw/refs/heads/main/release/FW_Driver_v1.4.5.apk)
+[![Click here to download FW Driver](https://img.shields.io/badge/CLICK_HERE_TO_DOWNLOAD-FW_DRIVER_v1.4.6-168A5B?style=for-the-badge&logo=android&logoColor=white)](https://github.com/sargteapot/transport/raw/refs/heads/main/release/FW_Driver_v1.4.6.apk)
 
 Android may ask for permission to install an app from your browser or file manager. Allow it when prompted, then open the downloaded APK.
 
@@ -14,7 +14,12 @@ Android may ask for permission to install an app from your browser or file manag
 
 ## Current release
 
-**FW Driver v1.4.5**
+**FW Driver v1.4.6**
+
+- Added a Settings sync status and manual **Sync now** button
+- Fixed background signature and photo uploads against Firebase Storage rules
+- Fixed queued work getting stuck behind Android retry backoff
+- Moved the app update manifest to the published GitHub release directory
 
 - Full offline workflow after the initial authenticated job download
 - Durable local queue for job statuses, checklists, pre-starts and completed-job clearing
@@ -55,7 +60,7 @@ Android may ask for permission to install an app from your browser or file manag
 FW Driver checks an HTTPS JSON manifest when the app starts and from Settings.
 The manifest location defaults to:
 
-`https://transportercam-2ec51107.web.app/downloads/fw-driver-update.json`
+`https://raw.githubusercontent.com/sargteapot/transport/main/release/fw-driver-update.json`
 
 Override it for a build with the Gradle property `FW_UPDATE_MANIFEST_URL`. For
 example, add this to a user-level `gradle.properties` file (do not commit local
@@ -67,8 +72,8 @@ The manifest format is:
 
 ```json
 {
-  "versionCode": 9,
-  "versionName": "1.4.5",
+  "versionCode": 10,
+  "versionName": "1.4.6",
   "minimumVersionCode": 6,
   "apkUrl": "https://example.web.app/downloads/fw-driver-1.4.4.apk",
   "sha256": "64-character lowercase SHA-256 value",

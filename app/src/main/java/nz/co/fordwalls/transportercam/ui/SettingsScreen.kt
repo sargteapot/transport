@@ -30,6 +30,8 @@ fun SettingsScreen(
     onNotificationsToggle: (Boolean) -> Unit,
     darkMode: String,
     onDarkModeChange: (String) -> Unit,
+    pendingSyncCount: Int,
+    onSyncNow: () -> Unit,
     updateState: UpdateState,
     onCheckForUpdates: () -> Unit,
     onDownloadUpdate: (UpdateManifest) -> Unit,
@@ -142,6 +144,22 @@ fun SettingsScreen(
                 }
             }
             
+            Spacer(modifier = Modifier.height(12.dp))
+
+            SettingsSection(title = "Offline sync", icon = Icons.Default.Sync) {
+                ListItem(
+                    headlineContent = { Text(if (pendingSyncCount == 0) "Everything is synced" else "$pendingSyncCount item${if (pendingSyncCount == 1) "" else "s"} waiting") },
+                    supportingContent = { Text(if (pendingSyncCount == 0) "No local changes are waiting to upload" else "Connect to the internet, then force a retry below") },
+                    leadingContent = { Icon(if (pendingSyncCount == 0) Icons.Default.CloudDone else Icons.Default.CloudUpload, null) },
+                    colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
+                )
+                Button(onClick = onSyncNow, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Default.Sync, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Sync now")
+                }
+            }
+
             Spacer(modifier = Modifier.height(12.dp))
 
             SettingsSection(title = "App update", icon = Icons.Default.SystemUpdate) {
@@ -372,6 +390,8 @@ fun SettingsScreenPreview() {
         onNotificationsToggle = {},
         darkMode = "auto",
         onDarkModeChange = {},
+        pendingSyncCount = 2,
+        onSyncNow = {},
         updateState = UpdateState.UpToDate,
         onCheckForUpdates = {},
         onDownloadUpdate = {},

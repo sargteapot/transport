@@ -135,6 +135,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val imageQuality: Flow<Int> = settingsDataStore.imageQuality
     val shareSummaryEnabled: Flow<Boolean> = settingsDataStore.shareSummaryEnabled
     val captureFeedbackEnabled: Flow<Boolean> = settingsDataStore.captureFeedbackEnabled
+    val pendingSyncCount: Flow<Int> = combine(
+        dao.observePendingSyncCount(), dao.observePendingMediaCount()
+    ) { changes, media -> changes + media }
 
     private var isFirstSync = true
     private val NOTIFICATION_CHANNEL_ID = "new_jobs_channel"
@@ -540,6 +543,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun checkForUpdates() = appUpdater.check()
+
+    fun syncNow() = OfflineSync.schedule(getApplication())
 
     fun downloadUpdate(manifest: UpdateManifest) = appUpdater.download(manifest)
 

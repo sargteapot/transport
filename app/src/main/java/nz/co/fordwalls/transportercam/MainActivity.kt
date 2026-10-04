@@ -174,6 +174,7 @@ fun AppNavigation(
     val darkMode by viewModel.darkMode.collectAsState(initial = "auto")
     val shareSummaryEnabled by viewModel.shareSummaryEnabled.collectAsState(initial = true)
     val updateState by viewModel.updateState.collectAsState()
+    val pendingSyncCount by viewModel.pendingSyncCount.collectAsState(initial = 0)
     val jobs by viewModel.jobs.collectAsState()
 
     androidx.activity.compose.BackHandler(enabled = navigationStack.size > 1) {
@@ -320,6 +321,11 @@ fun AppNavigation(
                 onNotificationsToggle = { viewModel.setNotificationsEnabled(it) },
                 darkMode = darkMode,
                 onDarkModeChange = { viewModel.setDarkMode(it) },
+                pendingSyncCount = pendingSyncCount,
+                onSyncNow = {
+                    viewModel.syncNow()
+                    Toast.makeText(context, "Sync started", Toast.LENGTH_SHORT).show()
+                },
                 updateState = updateState,
                 onCheckForUpdates = { viewModel.checkForUpdates() },
                 onDownloadUpdate = { viewModel.downloadUpdate(it) },

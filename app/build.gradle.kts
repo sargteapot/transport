@@ -18,11 +18,11 @@ android {
         applicationId = "nz.co.fordwalls.transportercam"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.4.5"
+        versionCode = 10
+        versionName = "1.4.6"
 
         val updateManifestUrl = providers.gradleProperty("FW_UPDATE_MANIFEST_URL")
-            .orElse("https://transportercam-2ec51107.web.app/downloads/fw-driver-update.json")
+            .orElse("https://raw.githubusercontent.com/sargteapot/transport/main/release/fw-driver-update.json")
             .get()
         buildConfigField("String", "UPDATE_MANIFEST_URL", "\"${updateManifestUrl.replace("\"", "\\\"")}\"")
 

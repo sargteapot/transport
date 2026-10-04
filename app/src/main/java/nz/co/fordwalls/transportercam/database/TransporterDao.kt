@@ -14,6 +14,12 @@ interface TransporterDao {
     @Query("SELECT * FROM pending_sync ORDER BY createdAt ASC LIMIT :limit")
     suspend fun getPendingSync(limit: Int = 50): List<PendingSync>
 
+    @Query("SELECT COUNT(*) FROM pending_sync")
+    fun observePendingSyncCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM media_assets WHERE cloudState IN ('PENDING','FAILED')")
+    fun observePendingMediaCount(): Flow<Int>
+
     @Query("DELETE FROM pending_sync WHERE id = :id")
     suspend fun deletePendingSync(id: Long)
 

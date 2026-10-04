@@ -1,0 +1,13 @@
+{
+  "versionCode": 10,
+  "versionName": "1.4.6",
+  "minimumVersionCode": 6,
+  "apkUrl": "https://github.com/sargteapot/transport/raw/refs/heads/main/release/FW_Driver_v1.4.6.apk",
+  "sha256": "91926e574f9b7ce76ef450ba084e181b817d4c68d7f0bea8ff34358fce7c9bde",
+  "releaseNotes": [
+    "Added Sync now and queued-item status in Settings",
+    "Fixed background signature and media uploads",
+    "Fixed sync retries becoming stuck in Android backoff",
+    "Repaired the in-app update service"
+  ]
+}
